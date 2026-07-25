@@ -1,0 +1,19 @@
+{
+  "name": "@pickbits/weaver",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A provenance-aware, revision-safe book writing pipeline",
+  "type": "module",
+  "bin": {
+    "weaver": "./scripts/weaver.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "smoke": "node scripts/weaver.mjs status --root templates/book",
+    "status:example": "node scripts/weaver.mjs status --root templates/book"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "UNLICENSED"
+}

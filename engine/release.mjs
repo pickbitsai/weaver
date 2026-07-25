@@ -1,0 +1,122 @@
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  assembleMarkdown,
+  filterIntentionalEchoes,
+  findHighSeverityDuplicates,
+  loadScenes,
+  manuscriptHash,
+  validateCriticalPath
+} from "./manuscript.mjs";
+import { narrativeStateStatus } from "./state.mjs";
+
+const RELEASE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const escapeHtml = (value) => value
+  .replaceAll("&", "&amp;")
+  .replaceAll("<", "&lt;")
+  .replaceAll(">", "&gt;");
+
+export function runQualityChecks(root, project) {
+  const scenes = loadScenes(root, project);
+  const criticalPath = validateCriticalPath(root, scenes);
+  const duplicates = findHighSeverityDuplicates(scenes);
+  const unapprovedDuplicates = filterIntentionalEchoes(root, duplicates);
+  const state = narrativeStateStatus(root, project);
+  const issues = [];
+  if (!criticalPath.ok) issues.push(`critical-path gate failed (${criticalPath.missing.length} missing)`);
+  if (unapprovedDuplicates.length) issues.push(`repetition gate failed (${unapprovedDuplicates.length} unapproved duplicate(s))`);
+  if (project.require_current_state_for_release && state.stale) {
+    issues.push(`narrative state is stale from scene ${state.first_stale}`);
+  }
+  return { ok: issues.length === 0, issues, scenes, criticalPath, duplicates, unapprovedDuplicates, state };
+}
+
+function assembleHtml(project, scenes, releaseId) {
+  const sections = scenes.map((scene, index) => {
+    const previous = scenes[index - 1];
+    const next = scenes[index + 1];
+    const opening = !previous || previous.chapter !== scene.chapter
+      ? `<section class="chapter"><h1>Chapter ${scene.chapter}${project.chapters?.[String(scene.chapter)] ? `: ${escapeHtml(project.chapters[String(scene.chapter)])}` : ""}</h1>`
+      : '<div class="scene-break">* * *</div>';
+    const prose = scene.prose.split(/\n\s*\n/).filter(Boolean).map((paragraph) => {
+      const text = escapeHtml(paragraph.replace(/\s*\n\s*/g, " "));
+      return `<p>${text.replace(/\*([^*]+)\*/g, "<em>$1</em>")}</p>`;
+    }).join("\n");
+    return `${opening}\n${prose}${!next || next.chapter !== scene.chapter ? "</section>" : ""}`;
+  }).join("\n");
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(project.title)} — ${escapeHtml(releaseId)}</title>
+<style>
+@page{size:letter;margin:1in}
+body{max-width:6.5in;margin:0 auto;color:#111;font:12pt/2 Georgia,"Times New Roman",serif}
+.cover{height:8.5in;display:flex;flex-direction:column;justify-content:center;text-align:center;break-after:page}
+.cover h1{font-size:28pt}.chapter{break-before:page}.chapter h1{text-align:center;margin:1in 0 .65in;font-size:18pt}
+p{margin:0;text-indent:.5in}.scene-break{text-align:center;margin:.35in 0}
+@media screen{body{padding:1in}.cover{height:8in}}
+</style>
+</head>
+<body>
+<section class="cover"><h1>${escapeHtml(project.title)}</h1>${project.author ? `<p>By ${escapeHtml(project.author)}</p>` : ""}<p>Reader Edition</p><p>Release ${escapeHtml(releaseId)}</p></section>
+${sections}
+</body>
+</html>
+`;
+}
+
+export function buildRelease(root, project, releaseId, { force = false } = {}) {
+  if (!RELEASE_ID_PATTERN.test(releaseId || "")) {
+    throw new Error("release id must use lowercase letters, numbers, and hyphens");
+  }
+  const checks = runQualityChecks(root, project);
+  if (!checks.ok) throw new Error(`release gates failed:\n- ${checks.issues.join("\n- ")}`);
+  const sourceSha256 = manuscriptHash(checks.scenes);
+  const releaseDir = join(root, project.release_root, releaseId);
+  const manifestPath = join(releaseDir, "release-manifest.json");
+  if (existsSync(manifestPath) && !force) {
+    const existing = JSON.parse(readFileSync(manifestPath, "utf8"));
+    if (existing.source.sha256 !== sourceSha256) {
+      throw new Error(`release ${releaseId} already exists for a different manuscript hash; choose a new release id`);
+    }
+    return existing;
+  }
+  mkdirSync(releaseDir, { recursive: true });
+  const stem = `${project.project_id}-${releaseId}`;
+  const markdownPath = join(releaseDir, `${stem}.md`);
+  const htmlPath = join(releaseDir, `${stem}.html`);
+  writeFileSync(markdownPath, assembleMarkdown(project, checks.scenes, releaseId));
+  writeFileSync(htmlPath, assembleHtml(project, checks.scenes, releaseId));
+  const artifacts = [markdownPath, htmlPath].map((path) => {
+    const bytes = readFileSync(path);
+    return {
+      file: path.slice(releaseDir.length + 1).replaceAll("\\", "/"),
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex")
+    };
+  });
+  const manifest = {
+    schema_version: 1,
+    project_id: project.project_id,
+    release_id: releaseId,
+    lifecycle: "review-candidate",
+    created_at: new Date().toISOString(),
+    source: {
+      scene_count: checks.scenes.length,
+      chapter_count: new Set(checks.scenes.map((scene) => scene.chapter)).size,
+      words: checks.scenes.reduce((sum, scene) => sum + scene.words, 0),
+      sha256: sourceSha256
+    },
+    gates: {
+      critical_path: checks.criticalPath,
+      unapproved_high_similarity_duplicates: checks.unapprovedDuplicates.length,
+      narrative_state_stale: checks.state.stale
+    },
+    artifacts
+  };
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  return manifest;
+}

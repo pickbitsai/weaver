@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pickbits.ai/weaver/state-manifest-v1.json",
+  "title": "Weaver narrative-state build manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "project_id", "scenes"],
+  "properties": {
+    "version": { "const": 1 },
+    "project_id": { "type": "string" },
+    "accepted_at": { "type": "string" },
+    "scenes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source_sha256",
+          "state_sha256",
+          "upstream_sha256",
+          "dependency_sha256"
+        ],
+        "properties": {
+          "source_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "state_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "upstream_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "dependency_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        }
+      }
+    }
+  }
+}

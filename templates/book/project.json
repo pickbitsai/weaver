@@ -1,0 +1,17 @@
+{
+  "$schema": "https://pickbits.ai/weaver/project-v1.json",
+  "version": 1,
+  "project_id": "untitled-book",
+  "kind": "book",
+  "title": "Untitled Book",
+  "author": "",
+  "source_root": "manuscript",
+  "state_root": "narrative-state",
+  "release_root": "releases",
+  "reader_state_path": "manuscript/reader-state.md",
+  "outline_scene_root": "outline/scenes",
+  "require_current_state_for_release": true,
+  "chapters": {
+    "1": "Opening"
+  }
+}

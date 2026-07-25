@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pickbits.ai/weaver/project-v1.json",
+  "title": "Weaver book project",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "version",
+    "project_id",
+    "kind",
+    "title",
+    "source_root",
+    "state_root",
+    "release_root"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "kind": { "const": "book" },
+    "title": { "type": "string", "minLength": 1 },
+    "author": { "type": "string" },
+    "source_root": { "type": "string", "minLength": 1 },
+    "state_root": { "type": "string", "minLength": 1 },
+    "release_root": { "type": "string", "minLength": 1 },
+    "reader_state_path": { "type": "string", "minLength": 1 },
+    "outline_scene_root": { "type": "string", "minLength": 1 },
+    "require_current_state_for_release": { "type": "boolean" },
+    "chapters": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}
