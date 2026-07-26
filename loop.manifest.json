@@ -1,0 +1,108 @@
+{
+  "$schema": "./contracts/loop-manifest.schema.json",
+  "schema_version": "0.1",
+  "id": "weaver-revision-loop",
+  "title": "Revision-safe long-form narrative loop",
+  "intent": "Revise a long-form manuscript without silently carrying stale reader knowledge into downstream scenes or releases.",
+  "nodes": [
+    {
+      "id": "contract",
+      "kind": "operator",
+      "description": "Lock the outline, critical path, reveal ledger, style guide, and project configuration.",
+      "artifacts": ["project.json", "outline/", "quality/", "style-guide/"]
+    },
+    {
+      "id": "ground",
+      "kind": "deterministic",
+      "description": "Assemble the target beat, accepted upstream state, prior closing prose, and anti-reset constraints.",
+      "command": "weaver grounding <scene-id> --root <book>",
+      "artifacts": ["grounding packet"]
+    },
+    {
+      "id": "draft",
+      "kind": "model-assisted",
+      "description": "Draft or revise scene prose from the grounding packet and locked project contracts.",
+      "artifacts": ["manuscript/chapter-XX/scene-YY/scene.md"]
+    },
+    {
+      "id": "review",
+      "kind": "model-assisted",
+      "description": "Critique continuity, style, reader-state movement, and structural intent using explicit reviewer prompts.",
+      "artifacts": ["review findings", "narrative-state/<scene-id>.md"]
+    },
+    {
+      "id": "accept-state",
+      "kind": "operator",
+      "description": "Explicitly accept reviewed derived state through a scene. No model can silently perform this transition.",
+      "command": "weaver state:accept --root <book> [--through <scene-id>]",
+      "artifacts": ["narrative-state/manifest.json"]
+    },
+    {
+      "id": "quality-gate",
+      "kind": "deterministic",
+      "description": "Verify critical-path anchors, repetition policy, and narrative-state freshness.",
+      "command": "weaver check --root <book>",
+      "artifacts": ["structured check result"]
+    },
+    {
+      "id": "release",
+      "kind": "operator",
+      "description": "Invoke an immutable, content-addressed reader release after all gates pass.",
+      "command": "weaver release --root <book> --id <release-id>",
+      "artifacts": ["release.md", "release.html", "manifest.json"]
+    }
+  ],
+  "edges": [
+    { "from": "contract", "to": "ground", "when": "the target scene contract is locked" },
+    { "from": "ground", "to": "draft", "when": "upstream narrative state is current" },
+    { "from": "draft", "to": "review", "when": "scene prose is ready for evaluation" },
+    { "from": "review", "to": "draft", "when": "the review finds a blocking issue" },
+    { "from": "review", "to": "accept-state", "when": "the operator accepts the prose and derived-state update" },
+    { "from": "accept-state", "to": "quality-gate", "when": "derived state is stamped against current source hashes" },
+    { "from": "quality-gate", "to": "draft", "when": "a critical-path, repetition, or freshness gate rejects" },
+    { "from": "quality-gate", "to": "release", "when": "every deterministic gate passes and the operator requests a release" },
+    { "from": "release", "to": "contract", "when": "an earlier scene or project contract is revised" }
+  ],
+  "authority": {
+    "model_may": ["propose scene prose", "propose narrative-state updates", "produce review findings"],
+    "model_may_not": ["accept derived state", "overwrite an immutable release", "publish externally"],
+    "operator_controls": ["project contracts", "state acceptance", "release invocation", "force override"]
+  },
+  "stop_conditions": [
+    "required upstream narrative state is stale",
+    "a critical-path anchor is missing or out of order",
+    "an unapproved high-similarity cross-scene duplicate is detected",
+    "the requested release ID already belongs to a different manuscript hash"
+  ],
+  "gates": [
+    {
+      "id": "downstream-invalidation",
+      "accepts": "state records whose source and accepted upstream hashes match",
+      "rejects": "the changed scene and every downstream state record after an earlier prose edit",
+      "evidence": ["test/state-release.test.mjs: early edit invalidates every downstream scene"]
+    },
+    {
+      "id": "repetition",
+      "accepts": "distinct sentences or explicitly approved intentional echoes",
+      "rejects": "unapproved high-similarity cross-scene sentences",
+      "evidence": ["test/manuscript.test.mjs: duplicate detector catches a cross-scene near-copy"]
+    },
+    {
+      "id": "immutable-release",
+      "accepts": "a new release ID or the same content hash",
+      "rejects": "reuse of a release ID after the manuscript hash changes",
+      "evidence": ["test/state-release.test.mjs: release is immutable for a changed manuscript hash"]
+    }
+  ],
+  "evidence": {
+    "behavioral_tests": "npm test",
+    "starter_smoke": "npm run smoke",
+    "publish_boundary": "npm run leakscan",
+    "clean_consumer": "npm run test:consumer",
+    "full_preflight": "npm run preflight"
+  },
+  "observability": {
+    "current": "CLI commands return structured JSON for status, checks, state, and releases.",
+    "not_yet_claimed": "Weaver does not yet emit OpenTelemetry spans or signed action receipts."
+  }
+}

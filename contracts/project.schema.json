@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://pickbits.ai/weaver/project-v1.json",
+  "$id": "https://raw.githubusercontent.com/pickbitsai/weaver/main/contracts/project.schema.json",
   "title": "Weaver book project",
   "type": "object",
   "additionalProperties": false,

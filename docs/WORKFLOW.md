@@ -10,8 +10,8 @@ invent retroactive setup for an ending it did not know.
 
 Run:
 
-```powershell
-node C:\new\Weaver\scripts\weaver.mjs grounding 1-1 --root C:\new\my-book
+```bash
+weaver grounding 1-1 --root ./my-book
 ```
 
 Use the packet to establish the scene's structural position, entering character
@@ -44,8 +44,8 @@ The reviewer prompts live under `prompts/reviewers/`.
 Update only what changed in `narrative-state/<scene-id>.md` and the cumulative
 reader ledger. Then accept reviewed state:
 
-```powershell
-node C:\new\Weaver\scripts\weaver.mjs state:accept --root C:\new\my-book --through 1-1
+```bash
+weaver state:accept --root ./my-book --through 1-1
 ```
 
 If an early scene is revised later, re-derive every stale scene in order.
@@ -53,9 +53,9 @@ If an early scene is revised later, re-derive every stale scene in order.
 
 ## 6. Verify and release
 
-```powershell
-node C:\new\Weaver\scripts\weaver.mjs check --root C:\new\my-book
-node C:\new\Weaver\scripts\weaver.mjs release --root C:\new\my-book --id beta-01
+```bash
+weaver check --root ./my-book
+weaver release --root ./my-book --id beta-01
 ```
 
 Use a new release ID whenever the manuscript changes. The generated manifest

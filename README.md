@@ -1,9 +1,9 @@
 # Weaver
 
-Weaver is the reusable book-writing pipeline extracted from
-`MrPickering/silentguardian-`. It keeps a long-form manuscript coherent across
-many writing and revision sessions by treating reader knowledge as derived
-state with explicit provenance and invalidation.
+Weaver is a reusable book-writing pipeline extracted from a production
+long-form narrative system. It keeps a manuscript coherent across many writing
+and revision sessions by treating reader knowledge as derived state with
+explicit provenance and invalidation.
 
 The initial extraction includes:
 
@@ -23,20 +23,20 @@ and project-specific production routes.
 
 Requirements: Node.js 22 or newer. There are no runtime dependencies.
 
-```powershell
-npm test
-node scripts/weaver.mjs init C:\new\my-book --id my-book --title "My Book"
-node scripts/weaver.mjs status --root C:\new\my-book
-node scripts/weaver.mjs grounding 1-1 --root C:\new\my-book
+```bash
+npm install --global @pickbitsai/weaver
+weaver init ./my-book --id my-book --title "My Book"
+weaver status --root ./my-book
+weaver grounding 1-1 --root ./my-book
 ```
 
 After writing or revising a scene, update its corresponding
 `narrative-state/<chapter>-<scene>.md`, then explicitly accept the derived state:
 
-```powershell
-node C:\new\Weaver\scripts\weaver.mjs state:accept --root C:\new\my-book
-node C:\new\Weaver\scripts\weaver.mjs check --root C:\new\my-book
-node C:\new\Weaver\scripts\weaver.mjs release --root C:\new\my-book --id beta-01
+```bash
+weaver state:accept --root ./my-book
+weaver check --root ./my-book
+weaver release --root ./my-book --id beta-01
 ```
 
 If an earlier scene changes, `state:status` marks it and all later scenes stale.
@@ -57,3 +57,31 @@ Re-derive them in order before accepting state again.
 All commands except `init` accept `--root <book-directory>`. See
 [docs/WORKFLOW.md](docs/WORKFLOW.md) for the full writing and revision loop and
 [docs/ORIGIN.md](docs/ORIGIN.md) for extraction provenance.
+
+## Inspect the loop
+
+[`loop.manifest.json`](loop.manifest.json) describes the workflow as a
+machine-readable graph: deterministic stages, model-assisted stages,
+operator-controlled transitions, rejection paths, stop conditions, and the
+evidence produced by every gate. [docs/LOOP.md](docs/LOOP.md) renders the same
+contract for humans.
+
+This is intentionally not another orchestration framework. The manifest makes
+the shipped behavior inspectable and gives portfolio tools a stable surface to
+visualize. The CLI remains plain Node.js.
+
+## Release evidence
+
+```bash
+npm run preflight
+```
+
+The preflight scans the exact npm publish allowlist for local paths and
+credential-shaped material, runs the behavioral and known-bad-fixture tests,
+checks the starter project, then packs and installs the tarball into a blank
+consumer project. A source checkout passing while the package is broken is not
+considered a release.
+
+## License
+
+MIT © Mark Pickering and PickBits.AI

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://pickbits.ai/weaver/project-v1.json",
+  "$schema": "https://raw.githubusercontent.com/pickbitsai/weaver/main/contracts/project.schema.json",
   "version": 1,
   "project_id": "untitled-book",
   "kind": "book",

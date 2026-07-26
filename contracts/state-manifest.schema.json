@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://pickbits.ai/weaver/state-manifest-v1.json",
+  "$id": "https://raw.githubusercontent.com/pickbitsai/weaver/main/contracts/state-manifest.schema.json",
   "title": "Weaver narrative-state build manifest",
   "type": "object",
   "additionalProperties": false,

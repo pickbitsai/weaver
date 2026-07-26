@@ -1,19 +1,50 @@
 {
-  "name": "@pickbits/weaver",
+  "name": "@pickbitsai/weaver",
   "version": "0.1.0",
-  "private": true,
   "description": "A provenance-aware, revision-safe book writing pipeline",
+  "keywords": [
+    "agentic-workflow",
+    "book-writing",
+    "narrative-state",
+    "provenance",
+    "revision"
+  ],
+  "author": "Mark Pickering and PickBits.AI",
+  "homepage": "https://github.com/pickbitsai/weaver#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pickbitsai/weaver.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pickbitsai/weaver/issues"
+  },
   "type": "module",
   "bin": {
     "weaver": "./scripts/weaver.mjs"
   },
+  "files": [
+    "contracts/",
+    "docs/",
+    "engine/",
+    "prompts/",
+    "scripts/",
+    "templates/",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "loop.manifest.json"
+  ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "test:consumer": "node test/consumer-install.mjs",
+    "leakscan": "node test/leakscan.mjs",
     "smoke": "node scripts/weaver.mjs status --root templates/book",
-    "status:example": "node scripts/weaver.mjs status --root templates/book"
+    "status:example": "node scripts/weaver.mjs status --root templates/book",
+    "preflight": "npm run leakscan && npm test && npm run smoke && npm run test:consumer",
+    "prepublishOnly": "npm run preflight"
   },
   "engines": {
     "node": ">=22"
   },
-  "license": "UNLICENSED"
+  "license": "MIT"
 }
