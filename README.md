@@ -24,19 +24,22 @@ and project-specific production routes.
 Requirements: Node.js 22 or newer. There are no runtime dependencies.
 
 ```bash
-npm install --global @pickbitsai/weaver
-weaver init ./my-book --id my-book --title "My Book"
-weaver status --root ./my-book
-weaver grounding 1-1 --root ./my-book
+npm install --save-dev github:pickbitsai/weaver
+npx weaver init ./my-book --id my-book --title "My Book"
+npx weaver status --root ./my-book
+npx weaver grounding 1-1 --root ./my-book
 ```
+
+The GitHub install works today. The equivalent registry package will be
+`@pickbitsai/weaver` after npm publication.
 
 After writing or revising a scene, update its corresponding
 `narrative-state/<chapter>-<scene>.md`, then explicitly accept the derived state:
 
 ```bash
-weaver state:accept --root ./my-book
-weaver check --root ./my-book
-weaver release --root ./my-book --id beta-01
+npx weaver state:accept --root ./my-book
+npx weaver check --root ./my-book
+npx weaver release --root ./my-book --id beta-01
 ```
 
 If an earlier scene changes, `state:status` marks it and all later scenes stale.
