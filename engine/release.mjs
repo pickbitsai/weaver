@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   assembleMarkdown,
@@ -9,7 +9,7 @@ import {
   manuscriptHash,
   validateCriticalPath
 } from "./manuscript.mjs";
-import { narrativeStateStatus } from "./state.mjs";
+import { narrativeStateStatus, readStateManifest, statePath } from "./state.mjs";
 
 const RELEASE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const escapeHtml = (value) => value
@@ -90,7 +90,24 @@ export function buildRelease(root, project, releaseId, { force = false } = {}) {
   const htmlPath = join(releaseDir, `${stem}.html`);
   writeFileSync(markdownPath, assembleMarkdown(project, checks.scenes, releaseId));
   writeFileSync(htmlPath, assembleHtml(project, checks.scenes, releaseId));
-  const artifacts = [markdownPath, htmlPath].map((path) => {
+  const artifactPaths = [markdownPath, htmlPath];
+  const scenesDir = join(releaseDir, "scenes");
+  mkdirSync(scenesDir, { recursive: true });
+  for (const scene of checks.scenes) {
+    const path = join(scenesDir, `${scene.id}.md`);
+    writeFileSync(path, `${scene.prose}\n`);
+    artifactPaths.push(path);
+  }
+  for (const scene of checks.scenes) {
+    const source = statePath(root, project, scene.id);
+    if (!existsSync(source)) continue;
+    const directory = join(releaseDir, "narrative-state");
+    mkdirSync(directory, { recursive: true });
+    const path = join(directory, `${scene.id}.md`);
+    copyFileSync(source, path);
+    artifactPaths.push(path);
+  }
+  const artifacts = artifactPaths.map((path) => {
     const bytes = readFileSync(path);
     return {
       file: path.slice(releaseDir.length + 1).replaceAll("\\", "/"),
@@ -98,8 +115,9 @@ export function buildRelease(root, project, releaseId, { force = false } = {}) {
       sha256: createHash("sha256").update(bytes).digest("hex")
     };
   });
+  const stateManifest = join(root, project.state_root, "manifest.json");
   const manifest = {
-    schema_version: 1,
+    schema_version: 2,
     project_id: project.project_id,
     release_id: releaseId,
     lifecycle: "review-candidate",
@@ -108,13 +126,22 @@ export function buildRelease(root, project, releaseId, { force = false } = {}) {
       scene_count: checks.scenes.length,
       chapter_count: new Set(checks.scenes.map((scene) => scene.chapter)).size,
       words: checks.scenes.reduce((sum, scene) => sum + scene.words, 0),
-      sha256: sourceSha256
+      sha256: sourceSha256,
+      scenes: checks.scenes.map((scene) => ({
+        id: scene.id,
+        chapter: scene.chapter,
+        scene: scene.scene,
+        path: scene.relativePath,
+        words: scene.words,
+        sha256: scene.hash
+      }))
     },
     gates: {
       critical_path: checks.criticalPath,
       unapproved_high_similarity_duplicates: checks.unapprovedDuplicates.length,
       narrative_state_stale: checks.state.stale
     },
+    narrative_state: existsSync(stateManifest) ? readStateManifest(root, project) : null,
     artifacts
   };
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);

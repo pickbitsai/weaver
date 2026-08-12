@@ -75,6 +75,9 @@ visualize. The CLI remains plain Node.js.
 
 ## Release evidence
 
+Each release contains per-scene prose, the accepted narrative-state snapshot,
+and per-scene hashes in manifest reading order.
+
 ```bash
 npm run preflight
 ```
