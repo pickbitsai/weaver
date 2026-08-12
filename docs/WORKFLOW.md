@@ -59,4 +59,6 @@ weaver release --root ./my-book --id beta-01
 ```
 
 Use a new release ID whenever the manuscript changes. The generated manifest
-records source and artifact hashes for traceability.
+records source and artifact hashes for traceability. Each release also contains
+per-scene prose, the accepted narrative-state snapshot, and per-scene hashes in
+reading order.

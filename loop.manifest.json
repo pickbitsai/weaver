@@ -49,7 +49,7 @@
       "kind": "operator",
       "description": "Invoke an immutable, content-addressed reader release after all gates pass.",
       "command": "weaver release --root <book> --id <release-id>",
-      "artifacts": ["release.md", "release.html", "manifest.json"]
+      "artifacts": ["release.md", "release.html", "scenes/<scene-id>.md", "narrative-state/<scene-id>.md", "manifest.json"]
     }
   ],
   "edges": [
