@@ -18,7 +18,7 @@ const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 const DOCUMENT_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
-<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>Chapter 1: Liese</w:t></w:r></w:p>
+<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>Chapter 1: Wren</w:t></w:r></w:p>
 <w:p><w:r><w:t>Curly “quotes” &amp; em — dash.</w:t><w:tab/><w:t>Tab</w:t></w:r></w:p>
 <w:p><w:r><w:i/><w:t>Italic words</w:t></w:r><w:r><w:t> stay.</w:t></w:r></w:p>
 <w:p><w:r><w:t>Keep accepted text.</w:t></w:r></w:p>
@@ -80,8 +80,8 @@ test("DOCX import reads deflate and stored ZIPs, preserves prose, and records PO
       const parsed = readSource(source);
       assert.equal(parsed.kind, "docx");
       assert.deepEqual(parsed.chapters.map((chapter) => ({ title: chapter.title, pov: chapter.pov, scenes: chapter.scene_count })), [
-        { title: "Liese", pov: "Liese", scenes: 2 },
-        { title: "", pov: "Liese", scenes: 1 }
+        { title: "Wren", pov: "Wren", scenes: 2 },
+        { title: "", pov: "Wren", scenes: 1 }
       ]);
       assert.match(parsed.chapters[0].scenes[0].prose, /em — dash/);
       assert.match(parsed.chapters[0].scenes[0].prose, /\*Italic words\*/);
@@ -240,10 +240,10 @@ test("Markdown and folder sources are deterministic in chapter order", () => {
   const source = mkdtempSync(join(tmpdir(), "weaver-source-"));
   try {
     writeFileSync(join(source, "chapter-10.txt"), "Chapter 10\n\nTen.");
-    writeFileSync(join(source, "chapter-2.md"), "# Liese\n\nTwo.");
+    writeFileSync(join(source, "chapter-2.md"), "# Wren\n\nTwo.");
     const parsed = readSource(source);
-    assert.deepEqual(parsed.chapters.map((chapter) => chapter.title), ["Liese", ""]);
-    assert.deepEqual(parsed.chapters.map((chapter) => chapter.pov), ["Liese", "Liese"]);
+    assert.deepEqual(parsed.chapters.map((chapter) => chapter.title), ["Wren", ""]);
+    assert.deepEqual(parsed.chapters.map((chapter) => chapter.pov), ["Wren", "Wren"]);
     importBook(root, readProject(root), source, { importedAt: "2026-09-25T00:00:00.000Z" });
     assert.deepEqual(loadScenes(root, readProject(root)).map((scene) => scene.chapter), [1, 2]);
   } finally {

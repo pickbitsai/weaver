@@ -73,7 +73,7 @@ try {
   weaver(["init", book, "--id", "consumer-book", "--title", "Consumer Book"]);
 
   weaver(["init", repairBook, "--id", "consumer-repair", "--title", "Consumer Repair", "--empty"]);
-  writeFileSync(finishedSource, "# Liese\n\nA finished scene with an em — dash.\n\n* * *\n\nA second scene.");
+  writeFileSync(finishedSource, "# Wren\n\nA finished scene with an em — dash.\n\n* * *\n\nA second scene.");
   weaver(["import", finishedSource, "--root", repairBook]);
   // An imported book has no accepted narrative state yet: check must say so, and release must
   // refuse until state is current. Export (the repair path) does not depend on state.
