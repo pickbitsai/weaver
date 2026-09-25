@@ -1,3 +1,4 @@
+<!-- PickBits Weaver · Apache-2.0 · https://github.com/pickbitsai/weaver -->
 # Style reviewer
 
 Read the scene and the project's voice notes and exemplars.

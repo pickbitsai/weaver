@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,6 +12,7 @@ import {
   validateCriticalPath
 } from "./manuscript.mjs";
 import { narrativeStateStatus, readStateManifest, statePath } from "./state.mjs";
+import { GENERATOR, HOMEPAGE, LICENSE_ID, PRODUCT_NAME, SCHEMA_BASE, VERSION } from "./identity.mjs";
 
 const RELEASE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const escapeHtml = (value) => value
@@ -50,6 +53,7 @@ function assembleHtml(project, scenes, releaseId) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="generator" content="${escapeHtml(GENERATOR)}">
 <title>${escapeHtml(project.title)} — ${escapeHtml(releaseId)}</title>
 <style>
 @page{size:letter;margin:1in}
@@ -107,6 +111,20 @@ export function buildRelease(root, project, releaseId, { force = false } = {}) {
     copyFileSync(source, path);
     artifactPaths.push(path);
   }
+  const createdAt = new Date().toISOString();
+  const provenancePath = join(releaseDir, "provenance.json");
+  writeFileSync(provenancePath, `${JSON.stringify({
+    $schema: `${SCHEMA_BASE}provenance-1.json`,
+    generator: GENERATOR,
+    product: PRODUCT_NAME,
+    version: VERSION,
+    license: LICENSE_ID,
+    homepage: HOMEPAGE,
+    project_id: project.project_id,
+    release_id: releaseId,
+    created_at: createdAt
+  }, null, 2)}\n`);
+  artifactPaths.push(provenancePath);
   const artifacts = artifactPaths.map((path) => {
     const bytes = readFileSync(path);
     return {
@@ -121,7 +139,7 @@ export function buildRelease(root, project, releaseId, { force = false } = {}) {
     project_id: project.project_id,
     release_id: releaseId,
     lifecycle: "review-candidate",
-    created_at: new Date().toISOString(),
+    created_at: createdAt,
     source: {
       scene_count: checks.scenes.length,
       chapter_count: new Set(checks.scenes.map((scene) => scene.chapter)).size,

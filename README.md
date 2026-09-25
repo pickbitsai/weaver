@@ -1,4 +1,4 @@
-# Weaver
+# PickBits Weaver
 
 Weaver is a reusable book-writing pipeline extracted from a production
 long-form narrative system. It keeps a manuscript coherent across many writing
@@ -89,5 +89,11 @@ consumer project. A source checkout passing while the package is broken is not
 considered a release.
 
 ## License
+
+Apache-2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE). Keep NOTICE with any
+copy or derivative. Versions up to and including 0.2.0 were released under the
+MIT License.
+
+## Historical License
 
 MIT © Mark Pickering and PickBits.AI

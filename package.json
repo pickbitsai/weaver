@@ -1,7 +1,7 @@
 {
   "name": "@pickbitsai/weaver",
-  "version": "0.1.0",
-  "description": "A provenance-aware, revision-safe book writing pipeline",
+  "version": "0.3.0",
+  "description": "PickBits Weaver: a provenance-aware, revision-safe book writing pipeline",
   "keywords": [
     "agentic-workflow",
     "book-writing",
@@ -9,7 +9,7 @@
     "provenance",
     "revision"
   ],
-  "author": "Mark Pickering and PickBits.AI",
+  "author": "Mark Pickering and PICKBITS LLC",
   "homepage": "https://github.com/pickbitsai/weaver#readme",
   "repository": {
     "type": "git",
@@ -31,6 +31,7 @@
     "templates/",
     "README.md",
     "LICENSE",
+    "NOTICE",
     "SECURITY.md",
     "loop.manifest.json"
   ],
@@ -46,5 +47,5 @@
   "engines": {
     "node": ">=22"
   },
-  "license": "MIT"
+  "license": "Apache-2.0"
 }

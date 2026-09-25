@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { initializeProject } from "../engine/init.mjs";
@@ -6,6 +8,7 @@ import { loadScenes, manuscriptHash } from "../engine/manuscript.mjs";
 import { readProject } from "../engine/project.mjs";
 import { buildRelease, runQualityChecks } from "../engine/release.mjs";
 import { acceptNarrativeState, buildGroundingPacket, narrativeStateStatus } from "../engine/state.mjs";
+import { GENERATOR } from "../engine/identity.mjs";
 
 const argv = process.argv.slice(2);
 const command = argv.shift() || "help";
@@ -99,8 +102,10 @@ try {
     const releaseId = option("--id");
     if (!releaseId) throw new Error("usage: weaver release --id beta-01 [--root directory] [--force]");
     print(buildRelease(root, project, releaseId, { force: argv.includes("--force") }));
+  } else if (command === "version" || command === "--version") {
+    print(GENERATOR);
   } else {
-    print(`Weaver
+    print(`${GENERATOR}: provenance-aware book pipeline
 
 Usage:
   weaver init <directory> [--id book-id] [--title "Book Title"]
