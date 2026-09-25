@@ -8,6 +8,8 @@ import { initializeProject } from "../engine/init.mjs";
 import { loadScenes, manuscriptHash } from "../engine/manuscript.mjs";
 import { readProject } from "../engine/project.mjs";
 import { buildRelease, runQualityChecks } from "../engine/release.mjs";
+import { DEFAULT_CHAPTER_PATTERN, importBook } from "../engine/import.mjs";
+import { exportBook } from "../engine/export.mjs";
 import { acceptNarrativeState, buildGroundingPacket, narrativeStateStatus } from "../engine/state.mjs";
 import { GENERATOR } from "../engine/identity.mjs";
 
@@ -37,6 +39,13 @@ function projectContext() {
 
 function print(value) {
   process.stdout.write(`${typeof value === "string" ? value : JSON.stringify(value, null, 2)}\n`);
+}
+
+function importOmissionsSummary(notImported = {}) {
+  const comments = Number(notImported.comments || 0);
+  const footnotes = Number(notImported.footnotes || 0) + Number(notImported.endnotes || 0);
+  const plural = (count, singular) => `${count} ${singular}${count === 1 ? "" : "s"}`;
+  return `Not imported: ${plural(comments, "comment")}, ${plural(footnotes, "footnote")}.`;
 }
 
 function doctorReport(root) {
@@ -89,7 +98,8 @@ try {
     if (!target) throw new Error("usage: weaver init <directory> [--id book-id] [--title \"Book Title\"]");
     const destination = initializeProject(target, {
       projectId: option("--id", "untitled-book"),
-      title: option("--title", "Untitled Book")
+      title: option("--title", "Untitled Book"),
+      empty: argv.includes("--empty")
     });
     print(destination);
     const gitCheck = doctorReport(destination).checks.find((check) => check.id === "git-available");
@@ -163,6 +173,29 @@ try {
       if (!releaseId) throw new Error("usage: weaver release --id beta-01 [--root directory] [--force]");
       print(buildRelease(root, project, releaseId, { force: argv.includes("--force") }));
     }
+  } else if (command === "import") {
+    const source = positional();
+    if (!source) throw new Error("usage: weaver import <source> [--root directory] [--pov title|none] [--chapter-pattern regex]");
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const result = importBook(root, project, source, {
+        povRule: option("--pov", "title"),
+        chapterPattern: option("--chapter-pattern", DEFAULT_CHAPTER_PATTERN)
+      });
+      if (argv.includes("--json")) print(result.record);
+      else {
+        print(`Imported ${result.record.totals.chapters} chapter(s), ${result.record.totals.scenes} scene(s), ${result.record.totals.words} word(s).`);
+        print(importOmissionsSummary(result.record.not_imported));
+        for (const chapter of result.record.chapters) print(`Chapter ${chapter.number}: ${chapter.title || "(untitled)"} — POV ${chapter.pov || "(none)"}`);
+      }
+    }
+  } else if (command === "export") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      print(exportBook(root, project, option("--format"), option("--out")));
+    }
   } else if (command === "version" || command === "--version") {
     warnAboutDoctor(root);
     print(GENERATOR);
@@ -171,28 +204,33 @@ try {
     print(`${GENERATOR}: provenance-aware book pipeline
 
 Usage:
-  weaver init <directory> [--id book-id] [--title "Book Title"]
+  weaver init <directory> [--id book-id] [--title "Book Title"] [--empty]
   weaver doctor [--root directory] [--json]
   weaver status [--root directory]
   weaver check [--root directory]
   weaver state:status [--root directory]
   weaver state:accept [--root directory] [--through scene-id]
   weaver grounding <scene-id> [--root directory] [--output file]
-  weaver release --id beta-01 [--root directory] [--force]`);
+  weaver release --id beta-01 [--root directory] [--force]
+  weaver import <source> [--root directory] [--pov title|none] [--chapter-pattern regex] [--json]
+  weaver export --format md|docx --out <file> [--root directory]`);
   } else {
     print(`${GENERATOR}: provenance-aware book pipeline
 
 Usage:
-  weaver init <directory> [--id book-id] [--title "Book Title"]
+  weaver init <directory> [--id book-id] [--title "Book Title"] [--empty]
   weaver doctor [--root directory] [--json]
   weaver status [--root directory]
   weaver check [--root directory]
   weaver state:status [--root directory]
   weaver state:accept [--root directory] [--through scene-id]
   weaver grounding <scene-id> [--root directory] [--output file]
-  weaver release --id beta-01 [--root directory] [--force]`);
+  weaver release --id beta-01 [--root directory] [--force]
+  weaver import <source> [--root directory] [--pov title|none] [--chapter-pattern regex] [--json]
+  weaver export --format md|docx --out <file> [--root directory]`);
   }
 } catch (error) {
-  process.stderr.write(`${error.stack || error.message}\n`);
+  // Authors read this output: say what went wrong in plain words, never a stack trace.
+  process.stderr.write(`${error.message || error}\n`);
   process.exitCode = 1;
 }

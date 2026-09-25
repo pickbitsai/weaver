@@ -19,6 +19,23 @@ The initial extraction includes:
 It deliberately excludes Silent Guardian prose, characters, art, audio, secrets,
 and project-specific production routes.
 
+## How PickBits Weaver works
+
+Weaver is opinionated about setup so that it can be trusted with a manuscript.
+These are requirements, not suggestions:
+
+1. **Your book lives in its own folder, under Git.** Every change has a
+   history and can be undone. `weaver init` sets this up for you.
+2. **Weaver is installed as a package, never copied into your book.** The AI
+   that works on your book cannot change the tool.
+3. **You work with an AI that can run commands,** such as Claude Code. Chat
+   windows that can't run Weaver aren't supported.
+4. **Your original files are never changed.** Import reads them; export writes
+   new files.
+
+`weaver doctor` checks all of this. Until it passes, Weaver won't write to your
+book, and it tells you in plain words what to fix.
+
 ## Quick start
 
 Requirements: Node.js 22 or newer. There are no runtime dependencies.
@@ -30,14 +47,31 @@ npx weaver status --root ./my-book
 npx weaver grounding 1-1 --root ./my-book
 ```
 
+## Repair a finished book
+
+Use one Weaver project for each book in a series. Start an empty book, import
+the finished Word, Markdown, text, or folder source, then check and export it.
+The original source is read-only and is never changed, moved, or renamed.
+
+```bash
+npx weaver init ./my-book --id my-book --title "My Book" --empty
+npx weaver import ./finished-book.docx --root ./my-book
+npx weaver check --root ./my-book
+npx weaver export --format docx --out ./repaired-book.docx --root ./my-book
+```
+
+An imported book reports its narrative state as stale until a later workflow
+bootstraps that derived state; this is expected, and its critical-path check
+is skipped until a project-specific path is defined.
+
+Scene prose uses Markdown-style `*italics*`; literal asterisks and backslashes
+are escaped. Bold Markdown is intentionally unsupported and is imported as
+literal text.
+
 The GitHub install works today. The equivalent registry package will be
 `@pickbitsai/weaver` after npm publication.
 
-## Supported setup
-
-Keep the book in its own folder under Git. Install Weaver as a package outside
-the book; never copy Weaver into the book folder. Weaver runs with an AI that
-can run commands, such as Claude Code, and `weaver doctor` checks this setup.
+## Keep narrative state current
 
 After writing or revising a scene, update its corresponding
 `narrative-state/<chapter>-<scene>.md`, then explicitly accept the derived state:
@@ -56,6 +90,8 @@ Re-derive them in order before accepting state again.
 | Command | Purpose |
 | --- | --- |
 | `init <directory>` | Create a generic book workspace |
+| `import <source>` | Import a finished DOCX, Markdown, text file, or folder into an empty book |
+| `export --format md\|docx --out <file>` | Export the current manuscript without overwriting the source or an existing file |
 | `doctor` | Check the book folder, Git, host, and Weaver installation |
 | `status` | Summarize manuscript hash, words, scenes, and state freshness |
 | `check` | Run project, critical-path, repetition, and state gates |
@@ -100,7 +136,3 @@ considered a release.
 Apache-2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE). Keep NOTICE with any
 copy or derivative. Versions up to and including 0.2.0 were released under the
 MIT License.
-
-## Historical License
-
-MIT © Mark Pickering and PickBits.AI

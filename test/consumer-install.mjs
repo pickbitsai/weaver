@@ -11,6 +11,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sandbox = mkdtempSync(join(tmpdir(), "weaver-consumer-"));
 const consumer = join(sandbox, "consumer");
 const book = join(consumer, "book");
+const repairBook = join(consumer, "repair-book");
+const finishedSource = join(consumer, "finished.md");
 const npmCli = process.env.npm_execpath;
 const env = { ...process.env, NPM_CONFIG_CACHE: join(sandbox, "npm-cache") };
 assert.ok(npmCli, "npm_execpath is required; run this check through npm");
@@ -69,6 +71,22 @@ try {
   assert.ok(existsSync(installedNotice), "NOTICE is missing from the packed package");
   assert.match(readFileSync(installedNotice, "utf8"), /PickBits Weaver/);
   weaver(["init", book, "--id", "consumer-book", "--title", "Consumer Book"]);
+
+  weaver(["init", repairBook, "--id", "consumer-repair", "--title", "Consumer Repair", "--empty"]);
+  writeFileSync(finishedSource, "# Liese\n\nA finished scene with an em — dash.\n\n* * *\n\nA second scene.");
+  weaver(["import", finishedSource, "--root", repairBook]);
+  // An imported book has no accepted narrative state yet: check must say so, and release must
+  // refuse until state is current. Export (the repair path) does not depend on state.
+  const repairCheckResult = weaverResult(["check", "--root", repairBook]);
+  assert.equal(repairCheckResult.status, 1, repairCheckResult.stderr);
+  const repairCheck = JSON.parse(repairCheckResult.stdout);
+  assert.deepEqual(repairCheck.issues, [`narrative state is stale from scene ${repairCheck.narrative_state.first_stale}`]);
+  const repairRelease = weaverResult(["release", "--root", repairBook, "--id", "too-early"]);
+  assert.notEqual(repairRelease.status, 0);
+  assert.equal(existsSync(join(repairBook, "releases", "too-early")), false);
+  const repairDocx = join(consumer, "consumer-repair.docx");
+  weaver(["export", "--format", "docx", "--out", repairDocx, "--root", repairBook]);
+  assert.equal(readFileSync(repairDocx).subarray(0, 2).toString(), "PK");
 
   const doctor = JSON.parse(weaver(["doctor", "--json", "--root", book]));
   assert.equal(doctor.checks.find((check) => check.id === "install-integrity").status, "pass");

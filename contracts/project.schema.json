@@ -33,6 +33,21 @@
     "chapters": {
       "type": "object",
       "additionalProperties": { "type": "string" }
+    },
+    "source_book": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "sha256", "kind", "imported_at", "chapters", "scenes", "words", "pov_rule"],
+      "properties": {
+        "file": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "kind": { "enum": ["docx", "markdown", "text", "folder"] },
+        "imported_at": { "type": "string", "format": "date-time" },
+        "chapters": { "type": "integer", "minimum": 1 },
+        "scenes": { "type": "integer", "minimum": 1 },
+        "words": { "type": "integer", "minimum": 0 },
+        "pov_rule": { "enum": ["title", "none"] }
+      }
     }
   }
 }

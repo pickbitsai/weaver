@@ -16,7 +16,7 @@ export function extractProse(text, source = "scene") {
 }
 
 export function countWords(text) {
-  return text.match(/[\p{L}\p{N}]+(?:[’'][\p{L}\p{N}]+)*/gu)?.length || 0;
+  return text.match(/[\p{L}\p{N}]+(?:['\u2019][\p{L}\p{N}]+)*/gu)?.length || 0;
 }
 
 export function loadScenes(root, project) {

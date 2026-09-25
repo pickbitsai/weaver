@@ -8,6 +8,27 @@ Before working on a book, run:
 weaver doctor --root ./my-book
 ```
 
+## Repair path
+
+For a finished book, create a separate Weaver project with `--empty`; this
+removes the starter scene and starter critical-path fixture while preserving
+the generic project configuration. Importing never merges with existing scene
+files and never writes to the source document. A series uses one project per
+book.
+
+```bash
+weaver init ./my-book --id my-book --title "My Book" --empty
+weaver import ./finished-book.docx --root ./my-book
+weaver status --root ./my-book
+weaver check --root ./my-book
+weaver export --format docx --out ./repaired-book.docx --root ./my-book
+```
+
+The import record under `imports/` preserves the source hash, front matter,
+chapter and scene counts, POV decisions, and scene word counts. Imported books
+begin with missing or stale narrative state by design; `check` reports that
+state but does not fail on it until the project's state workflow is bootstrapped.
+
 ## 1. Lock the architecture
 
 Before drafting, define the ending, scene-level beat map, reveal/reframe ledger,

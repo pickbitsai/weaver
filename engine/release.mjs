@@ -22,7 +22,9 @@ const escapeHtml = (value) => value
 
 export function runQualityChecks(root, project) {
   const scenes = loadScenes(root, project);
-  const criticalPath = validateCriticalPath(root, scenes);
+  const criticalPath = project.source_book && !existsSync(join(root, "quality", "critical-path.json"))
+    ? { ok: true, skipped: true, total: 0, intact: 0, missing: [] }
+    : validateCriticalPath(root, scenes);
   const duplicates = findHighSeverityDuplicates(scenes);
   const unapprovedDuplicates = filterIntentionalEchoes(root, duplicates);
   const state = narrativeStateStatus(root, project);
