@@ -59,6 +59,8 @@ function voiceBook() {
     `"The arrangement is elegant, and shall satisfy the council," said Lady Veyra.`,
     `Lady Veyra replied, "Whom would you have us trust when every witness has vanished?"`,
     `"Pray, let the lanterns remain lit until the final courier returns," said Lady Veyra.`,
+    // Keeps Veyra's evidence clearly above the 150-word hard-contrast minimum (it sat at 149).
+    `"We shall record every answer faithfully, whatever the hour," said Lady Veyra.`,
     `Lady Veyra said, "Perhaps the silence contains a warning that patience alone may reveal."`,
     `"One must consider the consequence before choosing an answer that cannot be recalled," said Lady Veyra.`,
     `Lady Veyra continued, "Indeed, the eastern gate shall open only after the bells have sounded."`,

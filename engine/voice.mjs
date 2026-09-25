@@ -386,56 +386,111 @@ function oneDecimal(value) {
   return Number(value.toFixed(1));
 }
 
-function reasonFor(line, features, profile, settings) {
+function formalMarkerNames(line, settings) {
+  const found = new Map();
+  for (const marker of [...BUILTIN_FORMAL, ...settings.formal]) {
+    if (markerRegex(marker).test(line)) found.set(marker.trim().toLocaleLowerCase(), marker.trim());
+  }
+  return [...found.values()];
+}
+
+function voiceSignals(line, features, profile, settings) {
+  const profileFeatures = profile.features || {};
+  const contractionRate = profileFeatures.contractions_per_100_words || 0;
+  const profanityRate = profileFeatures.profanity_per_100_words || 0;
+  const formalRate = profileFeatures.formal_markers_per_100_words || 0;
+  const sentenceRate = profileFeatures.mean_words_per_sentence || 0;
+  const formalWords = formalMarkerNames(line, settings);
+  const rateEligible = features.words >= 12;
+  const hard = {
+    profanity: features.profanity > 0
+      && profile.words >= 150
+      && profanityRate === 0,
+    formal: profile.words >= 150
+      && formalRate <= 0.2
+      && (formalWords.length >= 2 || (formalWords.length >= 1 && features.words >= 15))
+  };
+  const signals = {
+    long: features.words >= 15
+      && sentenceRate > 0
+      && features.words_per_sentence >= sentenceRate * 3,
+    short: rateEligible
+      && sentenceRate >= 12
+      && features.sentences >= 2
+      && features.words_per_sentence <= sentenceRate * 0.25,
+    contraction_absence: rateEligible
+      && features.words >= 15
+      && features.contractions === 0
+      && contractionRate >= 4,
+    contraction_presence: rateEligible
+      && features.contractions > 0
+      && contractionRate < 1,
+    profanity_presence: rateEligible
+      && features.profanity > 0
+      && profanityRate === 0,
+    formal_presence: rateEligible
+      && features.formal_markers > 0
+      && formalRate < 1
+  };
+  const questions = [...line.matchAll(/\?/gu)].length;
+  const exclamations = [...line.matchAll(/!/gu)].length;
+  return {
+    hard,
+    signals,
+    formalWords,
+    questions,
+    exclamations,
+    supporting: {
+      question: rateEligible && questions > 0 && questions / Math.max(features.sentences, 1) > (profileFeatures.question_share || 0),
+      exclamation: rateEligible && exclamations > 0 && exclamations / Math.max(features.sentences, 1) > (profileFeatures.exclamation_share || 0)
+    }
+  };
+}
+
+function reasonFor(line, features, profile, settings, analysis) {
   const reasons = [];
   const candidates = [];
   const expected = (key) => profile.distribution?.[key]?.mean ?? profile.features[key];
   const deviation = (key) => Math.abs(features[key] - expected(key)) / (profile.distribution?.[key]?.standard_deviation || 1);
-  const exclamations = [...line.matchAll(/!/gu)].length;
-  const questions = [...line.matchAll(/\?/gu)].length;
-  const formalMarkers = [...BUILTIN_FORMAL, ...settings.formal];
-  const formalWords = formalMarkers.filter((marker) => markerRegex(marker).test(line));
+  const { signals, hard, formalWords, questions, exclamations, supporting } = analysis;
   const formalList = formalWords.length ? formalWords.map((word) => `'${word}'`).join(", ") : "formal markers";
-  const add = (key, text) => candidates.push({ strength: deviation(key), text });
+  const add = (key, text, priority = 0) => candidates.push({ priority, strength: deviation(key), text });
   const contractionRate = oneDecimal(profile.features.contractions_per_100_words);
   const profanityRate = oneDecimal(profile.features.profanity_per_100_words);
   const formalRate = oneDecimal(profile.features.formal_markers_per_100_words);
   const sentenceRate = oneDecimal(profile.features.mean_words_per_sentence);
-  const exclamationRate = oneDecimal(profile.features.exclamation_share);
-  const questionRate = oneDecimal(profile.features.question_share);
-
-  if ((features.contractions === 0 && contractionRate >= 1) || (features.contractions > 0 && contractionRate < 1)) {
-    add("contractions_per_100_words", `This line has ${features.contractions ? `${features.contractions} contraction${features.contractions === 1 ? "" : "s"}` : `no contractions`} in ${features.words} words; ${profile.name} uses about ${contractionRate} contractions per 100 words.`);
+  if (hard.profanity) {
+    add("profanity_per_100_words", `This line has ${features.profanity} profanity marker${features.profanity === 1 ? "" : "s"}; ${profile.name} has no profanity markers across ${profile.words} words of evidence.`, 100);
   }
-  if ((features.profanity > 0 && profanityRate === 0) || (features.profanity === 0 && profanityRate >= 1)) {
-    add("profanity_per_100_words", `This line has ${features.profanity} profanity marker${features.profanity === 1 ? "" : "s"} in ${features.words} words; ${profile.name} uses about ${profanityRate} profanity markers per 100 words.`);
+  if (hard.formal) {
+    add("formal_markers_per_100_words", `This line uses ${formalList}; ${profile.name} uses about ${formalRate} formal markers per 100 words across ${profile.words} words of evidence.`, 100);
   }
-  if ((features.formal_markers > 0 && formalRate < 1) || (features.formal_markers === 0 && formalRate >= 1)) {
-    add("formal_markers_per_100_words", `This line uses ${formalList} (${features.formal_markers} formal marker${features.formal_markers === 1 ? "" : "s"} in ${features.words} words); ${profile.name} uses about ${formalRate} formal markers per 100 words.`);
+  if (signals.long) {
+    add("words_per_sentence", `This line averages ${oneDecimal(features.words_per_sentence)} words per sentence; ${profile.name}'s lines average ${sentenceRate}, so this is at least three times longer.`, 50);
+  } else if (signals.short) {
+    add("words_per_sentence", `This line averages ${oneDecimal(features.words_per_sentence)} words per sentence; ${profile.name}'s lines average ${sentenceRate}, so this is at most one quarter as long.`, 50);
   }
-  if ((exclamations > 0 && exclamationRate < 0.5) || (exclamations === 0 && exclamationRate >= 0.5)) {
-    add("exclamation_share", `This line has ${exclamations} exclamation${exclamations === 1 ? "" : "s"} across ${features.sentences} sentence${features.sentences === 1 ? "" : "s"}; ${profile.name} averages about ${exclamationRate} exclamations per sentence.`);
+  if (signals.contraction_absence) {
+    add("contractions_per_100_words", `This line has no contractions in ${features.words} words; ${profile.name} uses about ${contractionRate} contractions per 100 words.`, 40);
+  } else if (signals.contraction_presence) {
+    add("contractions_per_100_words", `This line has ${features.contractions} contraction${features.contractions === 1 ? "" : "s"} in ${features.words} words; ${profile.name} uses about ${contractionRate} contractions per 100 words.`, 40);
   }
-  if ((questions > 0 && questionRate < 0.5) || (questions === 0 && questionRate >= 0.5)) {
-    add("question_share", `This line has ${questions} question${questions === 1 ? "" : "s"} across ${features.sentences} sentence${features.sentences === 1 ? "" : "s"}; ${profile.name} averages about ${questionRate} questions per sentence.`);
+  if (signals.profanity_presence && !hard.profanity) {
+    add("profanity_per_100_words", `This line has ${features.profanity} profanity marker${features.profanity === 1 ? "" : "s"}; ${profile.name} uses about ${profanityRate} profanity markers per 100 words.`, 30);
   }
-  if (features.sentences && Math.abs(features.words_per_sentence - sentenceRate) >= 3) {
-    add("words_per_sentence", `This line is ${features.sentences === 1 ? "one" : `${features.sentences}`} ${features.words}-word sentence${features.sentences === 1 ? "" : "s"}; ${profile.name}'s lines average ${sentenceRate} words per sentence.`);
+  if (signals.formal_presence && !hard.formal) {
+    add("formal_markers_per_100_words", `This line uses ${formalList} (${features.formal_markers} formal marker${features.formal_markers === 1 ? "" : "s"}); ${profile.name} uses about ${formalRate} formal markers per 100 words.`, 30);
   }
-  candidates.sort((left, right) => right.strength - left.strength || left.text.localeCompare(right.text));
+  if (candidates.length && supporting.exclamation) {
+    add("exclamation_share", `This line has ${exclamations} exclamation${exclamations === 1 ? "" : "s"}; ${profile.name} averages fewer exclamations per sentence.`, 10);
+  }
+  if (candidates.length && supporting.question) {
+    add("question_share", `This line has ${questions} question${questions === 1 ? "" : "s"}; ${profile.name} averages fewer questions per sentence.`, 10);
+  }
+  candidates.sort((left, right) => right.priority - left.priority || right.strength - left.strength || left.text.localeCompare(right.text));
   reasons.push(...candidates.slice(0, 3).map((candidate) => candidate.text));
   if (!reasons.length) {
-    const largest = FEATURE_KEYS.map((key) => ({ key, value: features[key], expected: expected(key), strength: deviation(key) }))
-      .sort((left, right) => right.strength - left.strength)[0];
-    const labels = {
-      words_per_sentence: "sentence length",
-      contractions_per_100_words: "contractions",
-      profanity_per_100_words: "profanity",
-      exclamation_share: "exclamations",
-      question_share: "questions",
-      formal_markers_per_100_words: "formal markers"
-    };
-    reasons.push(`This line measures ${oneDecimal(largest.value)} for ${labels[largest.key]}; ${profile.name}'s usual lines measure about ${oneDecimal(largest.expected)}.`);
+    reasons.push(`This line is out of voice for ${profile.name}'s usual sentence length.`);
   }
   return reasons;
 }
@@ -480,12 +535,11 @@ export function runVoiceCheck(root, project, { sceneIds = null, pendingScenes = 
       continue;
     }
     const features = lineFeatures(line.text, settings);
+    const analysis = voiceSignals(line.text, features, profile, settings);
     const distance = profileDistance(features, profile);
-    const hardContrast = (features.profanity > 0 && profile.features.profanity_per_100_words === 0 && profile.words >= 150)
-      || (features.words_per_sentence >= 12 && features.contractions === 0 && features.formal_markers > 0
-        && ((profile.features.contractions_per_100_words >= 4 && profile.features.formal_markers_per_100_words <= 0.2)
-          || (profile.features.contractions_per_100_words <= 0.2 && profile.features.formal_markers_per_100_words >= 4)));
-    if (distance <= VOICE_DISTANCE_THRESHOLD && !hardContrast) continue;
+    const hardContrast = analysis.hard.profanity || analysis.hard.formal;
+    const independentSignals = Object.values(analysis.signals).filter(Boolean).length;
+    if (!hardContrast && independentSignals < 2) continue;
     const finding = {
       type: "voice",
       severity: "warn",
@@ -493,7 +547,7 @@ export function runVoiceCheck(root, project, { sceneIds = null, pendingScenes = 
       paragraph: line.paragraph,
       speaker: character.name,
       line: line.text,
-      reasons: reasonFor(line.text, features, profile, settings),
+      reasons: reasonFor(line.text, features, profile, settings, analysis),
       evidence: profile.evidence.slice(0, 3)
     };
     finding.reason = finding.reasons[0];
@@ -505,11 +559,13 @@ export function runVoiceCheck(root, project, { sceneIds = null, pendingScenes = 
         shared: sharedDistinctiveWords(line.text, otherProfile),
         contrast: hardContrastMatches(features, otherProfile)
       }))
-      .sort((left, right) => left.distance - right.distance || left.character.id.localeCompare(right.character.id));
+      .sort((left, right) => Number(right.contrast) - Number(left.contrast)
+        || left.distance - right.distance
+        || left.character.id.localeCompare(right.character.id));
     const best = candidates[0];
     const margin = distance - (best?.distance ?? Number.POSITIVE_INFINITY);
-    if (best && best.distance + SOUNDS_LIKE_MARGIN < distance
-      && (best.shared.length || best.contrast || margin >= SOUNDS_LIKE_MARGIN * 2)) {
+    if (best && (best.contrast || (best.distance + SOUNDS_LIKE_MARGIN < distance
+      && (best.shared.length || margin >= SOUNDS_LIKE_MARGIN * 2)))) {
       finding.maybe_sounds_like = {
         character: best.character.name,
         evidence: best.profile.evidence.slice(0, 2)
