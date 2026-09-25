@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { runDoctor } from "../engine/doctor.mjs";
 import { initializeProject } from "../engine/init.mjs";
@@ -14,7 +14,9 @@ import { acceptNarrativeState, buildGroundingPacket, narrativeStateStatus } from
 import { GENERATOR } from "../engine/identity.mjs";
 import { installHooks, runHook } from "../engine/hooks.mjs";
 import { runRules } from "../engine/rules.mjs";
-import { approveChapter, approvalHistory, describePendingChanges, rejectChapter, undoApproval } from "../engine/changes.mjs";
+import { approveChapter, approvalHistory, describePendingChanges, pendingChanges, recordImportBaseline, rejectChapter, undoApproval } from "../engine/changes.mjs";
+import { seedCharacters } from "../engine/characters.mjs";
+import { buildVoiceProfiles, runVoiceCheck } from "../engine/voice.mjs";
 
 const argv = process.argv.slice(2);
 const command = argv.shift() || "help";
@@ -50,6 +52,36 @@ function pendingSummary(report) {
     const findingLabel = `${chapter.blocking} blocking style finding${chapter.blocking === 1 ? "" : "s"}`;
     return `Chapter ${chapter.chapter}: ${chapter.scenes_changed} scene${chapter.scenes_changed === 1 ? "" : "s"} changed, +${chapter.words_added} / −${chapter.words_removed} words, ${findingLabel}`;
   }).join("\n");
+}
+
+function importedPovNames(root, project) {
+  const names = [];
+  const sourcePov = project.source_book?.pov;
+  if (typeof sourcePov === "string") names.push(sourcePov);
+  if (Array.isArray(sourcePov)) names.push(...sourcePov);
+  const scenesRoot = resolve(root, project.source_root);
+  function walk(directory) {
+    if (!existsSync(directory)) return;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = resolve(directory, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile() && entry.name === "scene.md") {
+        const pov = readFileSync(path, "utf8").match(/^\*\*POV:\*\*\s*(.+?)\s*$/mu)?.[1];
+        if (pov) names.push(pov);
+      }
+    }
+  }
+  walk(scenesRoot);
+  return names;
+}
+
+function voiceFindingText(finding) {
+  const evidence = finding.evidence.map((line) => `  - ${line.text} [${line.scene_id}, paragraph ${line.paragraph}]`).join("\n");
+  const sounds = finding.maybe_sounds_like
+    ? `\n  Maybe sounds like ${finding.maybe_sounds_like.character}:\n${finding.maybe_sounds_like.evidence.map((line) => `  - ${line.text} [${line.scene_id}, paragraph ${line.paragraph}]`).join("\n")}`
+    : "";
+  const reasons = finding.reasons?.length ? `\n  Reasons:\n${finding.reasons.map((reason) => `  - ${reason}`).join("\n")}` : "";
+  return `voice warn: ${finding.scene_id}, paragraph ${finding.paragraph}, ${finding.speaker}: ${finding.reason}${reasons}\n  Line: ${finding.line}\n  Typical lines:\n${evidence}${sounds}`;
 }
 
 function importOmissionsSummary(notImported = {}) {
@@ -150,7 +182,8 @@ try {
       critical_path: checks.criticalPath,
       unapproved_high_similarity_duplicates: checks.unapprovedDuplicates,
         narrative_state: checks.state,
-        rules: { blocking: checks.rules.blocking, warnings: checks.rules.warnings }
+        rules: { blocking: checks.rules.blocking, warnings: checks.rules.warnings },
+        voices: { warnings: checks.voices.warnings, stale_profiles: checks.voices.stale_profiles }
       };
     print(report);
     if (!checks.ok) process.exitCode = 1;
@@ -270,11 +303,13 @@ try {
         povRule: option("--pov", "title"),
         chapterPattern: option("--chapter-pattern", DEFAULT_CHAPTER_PATTERN)
       });
-      if (argv.includes("--json")) print(result.record);
+      const baseline = recordImportBaseline(root, result.project, result.record, result.importPath);
+      if (argv.includes("--json")) print({ ...result.record, baseline });
       else {
         print(`Imported ${result.record.totals.chapters} chapter(s), ${result.record.totals.scenes} scene(s), ${result.record.totals.words} word(s).`);
         print(importOmissionsSummary(result.record.not_imported));
         for (const chapter of result.record.chapters) print(`Chapter ${chapter.number}: ${chapter.title || "(untitled)"} — POV ${chapter.pov || "(none)"}`);
+        print(`Saved your original as the starting point (Approval ${baseline.id}). Repairs are reviewed against it, one chapter at a time.`);
       }
     }
   } else if (command === "export") {
@@ -282,6 +317,40 @@ try {
     else {
       const { project } = projectContext();
       print(exportBook(root, project, option("--format"), option("--out")));
+    }
+  } else if (command === "characters" && positional() === "seed") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const result = seedCharacters(root, importedPovNames(root, project));
+      if (argv.includes("--json")) print(result);
+      else print(result.added.length
+        ? `Added ${result.added.length} character entr${result.added.length === 1 ? "y" : "ies"} to ${result.path}.`
+        : `No new POV characters found; registry unchanged at ${result.path}.`);
+    }
+  } else if (command === "voices" && positional() === "build") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const result = buildVoiceProfiles(root, project);
+      if (argv.includes("--json")) print(result);
+      else print(`Built ${result.profiles.length} voice profile(s) from manuscript ${result.manuscript_sha256}.`);
+    }
+  } else if (command === "voices" && positional() === "check") {
+    const { project } = projectContext();
+    const selectedScene = option("--scene");
+    const pending = argv.includes("--pending") ? pendingChanges(root, project) : null;
+    const result = runVoiceCheck(root, project, {
+      sceneIds: selectedScene ? [selectedScene] : null,
+      pendingScenes: pending?.scenes || null
+    });
+    if (argv.includes("--json")) print(result);
+    else {
+      for (const name of result.stale_profiles) print(`Warning: voice profiles are out of date, run weaver voices build (${name}).`);
+      for (const note of result.notes) print(`Note: ${note.scene_id}, paragraph ${note.paragraph}, ${note.speaker}: ${note.message}`);
+      if (!result.findings.length && !result.notes.length) print("No voice warnings.");
+      for (const finding of result.findings) print(voiceFindingText(finding));
+      print(`\n${result.warnings} voice warning(s).`);
     }
   } else if (command === "version" || command === "--version") {
     print(GENERATOR);
@@ -295,6 +364,9 @@ Usage:
   weaver status [--root directory]
   weaver check [--root directory]
   weaver rules [--root directory] [--scene scene-id] [--json]
+  weaver characters seed [--root directory] [--json]
+  weaver voices build [--root directory] [--json]
+  weaver voices check [--scene scene-id | --pending] [--root directory] [--json]
   weaver changes [--root directory] [--json]
   weaver approve [--chapter number] [--note "text"] [--root directory]
   weaver reject [--chapter number] [--root directory]
@@ -316,6 +388,9 @@ Usage:
   weaver status [--root directory]
   weaver check [--root directory]
   weaver rules [--root directory] [--scene scene-id] [--json]
+  weaver characters seed [--root directory] [--json]
+  weaver voices build [--root directory] [--json]
+  weaver voices check [--scene scene-id | --pending] [--root directory] [--json]
   weaver changes [--root directory] [--json]
   weaver approve [--chapter number] [--note "text"] [--root directory]
   weaver reject [--chapter number] [--root directory]

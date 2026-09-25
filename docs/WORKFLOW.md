@@ -36,6 +36,15 @@ The repair path uses the same author approval boundary: imported or AI-edited
 scene changes appear in `weaver changes`, and the author approves or rejects
 one chapter at a time before continuing to state review and export.
 
+For imported books, seed the registry from the imported POV headers, then build
+profiles after the prose is in place:
+
+```bash
+weaver characters seed --root ./my-book
+weaver voices build --root ./my-book
+weaver voices check --root ./my-book
+```
+
 ## 1. Lock the architecture
 
 Before drafting, define the ending, scene-level beat map, reveal/reframe ledger,
@@ -79,6 +88,17 @@ a changed state or resonant image.
 Run `weaver rules --root ./my-book` during drafting or repair to inspect style
 findings directly. A blocking style finding makes `check` fail; warnings remain
 visible without failing the gate.
+
+Run `weaver voices check --scene <scene-id> --root ./my-book` while revising a
+scene, or use `--pending` to inspect changed dialogue only. Voice findings show
+the evidence lines that informed the warning and never block `check`, `approve`,
+or release. Rebuild profiles after an accepted prose change with
+`weaver voices build --root ./my-book`.
+
+Profiles are built from the approved manuscript at `HEAD`. Working-tree edits
+are checked against those profiles without making them stale; after
+`weaver approve` succeeds, Weaver rebuilds the ignored derived profiles from
+the new approval commit.
 
 Run three independent lenses:
 

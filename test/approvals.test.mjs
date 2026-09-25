@@ -172,3 +172,30 @@ test("approve keeps an author's existing Git identity instead of overriding it l
     rmSync(globalConfig, { force: true });
   }
 });
+
+test("import records the original book as the approved starting point", () => {
+  const root = mkdtempSync(join(tmpdir(), "weaver-import-baseline-"));
+  const source = join(tmpdir(), `weaver-baseline-source-${process.pid}.md`);
+  try {
+    let result = run(ROOT, ["init", join(root, "book"), "--id", "baseline", "--title", "Baseline", "--empty"]);
+    assert.equal(result.status, 0, result.stderr);
+    const book = join(root, "book");
+    writeFileSync(source, "# Wren\n\nThe original first scene.\n\n* * *\n\nThe original second scene.\n");
+    result = run(ROOT, ["import", source, "--root", book]);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /Saved your original as the starting point/);
+    assert.match(git(book, ["log", "-1", "--format=%s"]).stdout, /^Import original manuscript: /);
+    result = run(ROOT, ["changes", "--root", book, "--json"]);
+    assert.equal(result.status, 0, result.stderr);
+    const afterImport = JSON.parse(result.stdout);
+    assert.equal(afterImport.pending, false, "nothing is pending right after import");
+    assert.equal(afterImport.chapters.length, 0);
+    const scene = join(book, "manuscript", "chapter-01", "scene-01", "scene.md");
+    writeFileSync(scene, readFileSync(scene, "utf8").replace("original first", "repaired first"));
+    result = run(ROOT, ["approve", "--root", book, "--chapter", "1"]);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(source, { force: true });
+  }
+});

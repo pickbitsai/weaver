@@ -6,6 +6,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { countWords, extractProse } from "./manuscript.mjs";
 import { runRules } from "./rules.mjs";
 import { GENERATOR } from "./identity.mjs";
+import { buildVoiceProfiles, runVoiceCheck } from "./voice.mjs";
 
 const SCENE_PATH = /^chapter-(\d+)\/scene-(\d+)\/scene\.md$/u;
 
@@ -108,8 +109,13 @@ function chapterFindings(root, project, pending) {
   const available = pending.scenes.filter((scene) => !scene.deleted).map((scene) => scene.id);
   if (!available.length) return new Map();
   const result = runRules(root, project, { sceneIds: available });
+  const voice = runVoiceCheck(root, project, { sceneIds: available });
   const byScene = new Map();
   for (const finding of result.findings) {
+    if (!byScene.has(finding.scene_id)) byScene.set(finding.scene_id, []);
+    byScene.get(finding.scene_id).push(finding);
+  }
+  for (const finding of voice.findings) {
     if (!byScene.has(finding.scene_id)) byScene.set(finding.scene_id, []);
     byScene.get(finding.scene_id).push(finding);
   }
@@ -143,6 +149,7 @@ export function describePendingChanges(root, project) {
       words_removed: removed,
       blocking: allFindings.filter((finding) => finding.severity === "block").length,
       warnings: allFindings.filter((finding) => finding.severity === "warn").length,
+      voice_warnings: allFindings.filter((finding) => finding.type === "voice").length,
       scenes: changed
     };
   });
@@ -220,7 +227,23 @@ export function approveChapter(root, project, chapter = null, note = "") {
   if (commit.status !== 0) throw new Error(`could not save the approval: ${(commit.stderr || commit.stdout || "").trim()}`);
   const sha = git(root, ["rev-parse", "--short", "HEAD"], { stdio: ["ignore", "pipe", "pipe"] });
   if (sha.status !== 0) throw new Error("approval was saved, but its id could not be read from Git");
-  return { chapter: selectedChapter, id: sha.stdout.trim(), paths, message: subject };
+  const voices = buildVoiceProfiles(root, project);
+  return { chapter: selectedChapter, id: sha.stdout.trim(), paths, message: subject, voice_profiles: voices.profiles.length };
+}
+
+// An imported book is the author's existing work: it is the starting point, not a pending change.
+// Commit it as the baseline so repairs are reviewed against the original, chapter by chapter.
+export function recordImportBaseline(root, project, record, importPath) {
+  ensureIdentity(root, project);
+  const paths = [project.source_root, "project.json", relative(root, importPath).replaceAll("\\", "/")];
+  const add = git(root, ["add", "--all", "--", ...paths], { stdio: ["ignore", "pipe", "pipe"] });
+  if (add.status !== 0) throw new Error(`could not stage the imported book: ${(add.stderr || "").trim()}`);
+  const subject = `Import original manuscript: ${record.source?.file || "source"}`;
+  const commit = git(root, ["commit", "-m", subject, "-m", `Imported-with: ${GENERATOR}`, "--", ...paths], { stdio: ["ignore", "pipe", "pipe"] });
+  if (commit.status !== 0) throw new Error(`could not save the imported book as the starting point: ${(commit.stderr || commit.stdout || "").trim()}`);
+  const sha = git(root, ["rev-parse", "--short", "HEAD"], { stdio: ["ignore", "pipe", "pipe"] });
+  const voices = buildVoiceProfiles(root, project);
+  return { id: sha.stdout.trim(), voice_profiles: voices.profiles.length };
 }
 
 export function rejectChapter(root, project, chapter = null) {

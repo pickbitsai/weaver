@@ -6,6 +6,7 @@ import { countWords, loadScenes } from "./manuscript.mjs";
 import { readProject } from "./project.mjs";
 import { loadRules, runRules } from "./rules.mjs";
 import { otherPendingChapters } from "./changes.mjs";
+import { runVoiceCheck } from "./voice.mjs";
 
 const MATCHER = "Edit|Write|MultiEdit";
 const PRE_COMMAND = "npx --no-install weaver hook pre";
@@ -101,12 +102,16 @@ function postHook(payload) {
     };
   }
   const result = runRules(scene.cwd, scene.project, { sceneIds: [scene.sceneId] });
+  const voices = runVoiceCheck(scene.cwd, scene.project, { sceneIds: [scene.sceneId] });
   if (result.blocking) {
     const blocking = result.findings.filter((finding) => finding.severity === "block").map(findingText).join("\n");
     return { decision: "block", reason: `${blocking}\nfix these before continuing` };
   }
-  if (result.warnings) {
-    const warnings = result.findings.filter((finding) => finding.severity === "warn").map(findingText).join("\n");
+  if (result.warnings || voices.warnings) {
+    const warnings = [
+      ...result.findings.filter((finding) => finding.severity === "warn").map(findingText),
+      ...voices.findings.map((finding) => `voice warning (paragraph ${finding.paragraph}, ${finding.speaker}): ${finding.reason}${finding.reasons?.length ? `\nReasons:\n${finding.reasons.map((reason) => `  - ${reason}`).join("\n")}` : ""}\nLine: ${finding.line}\nTypical lines:\n${finding.evidence.map((line) => `  - ${line.text} [${line.scene_id}, paragraph ${line.paragraph}]`).join("\n")}${finding.maybe_sounds_like ? `\nMaybe sounds like ${finding.maybe_sounds_like.character}:\n${finding.maybe_sounds_like.evidence.map((line) => `  - ${line.text} [${line.scene_id}, paragraph ${line.paragraph}]`).join("\n")}` : ""}`)
+    ].join("\n");
     return { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: warnings } };
   }
   return null;

@@ -84,6 +84,58 @@ Run `weaver rules --root ./my-book` for a human report or add `--json` for a
 machine-readable result. Blocking findings fail `check` and prevent release;
 warnings are reported but do not fail the gate.
 
+## Character voice
+
+The character registry at `world-bible/characters.json` is the author's explicit
+list of speakers. `weaver characters seed` adds POV names recorded by import;
+it never removes or overwrites an entry. Template books start with an empty
+registry. A registry entry has an id, display name, optional aliases, and a POV
+flag, for example:
+
+```json
+{ "id": "brask", "name": "Brask", "aliases": ["the sergeant"], "pov": true }
+```
+
+Dialogue attribution is deliberately conservative. A quoted span is attributed
+only by a nearby registry name or alias plus a supported speech verb, by an
+action beat naming exactly one registry character outside the quote, or by
+continuation from a previous paragraph that opened a quote. Names are whole
+words, aliases beginning with `the` are case-insensitive, and pronoun-only tags
+such as `she said` remain unattributed. Quotes whose speaker cannot be
+determined are excluded from profiles and checks. This is a deterministic
+heuristic, not a general-purpose dialogue parser.
+
+Build profiles from all attributed reader text with:
+
+```bash
+npx weaver voices build --root ./my-book
+npx weaver voices check --root ./my-book
+npx weaver voices check --pending --root ./my-book
+```
+
+Profiles record line and word totals, sentence shape, contractions, profanity,
+formal markers, sentence punctuation shares, distinctive words, and up to five
+typical evidence lines. Evidence requires at least 8 attributed lines and 80
+words. A smaller profile reports `not enough of their lines yet (N lines, M
+words)` and produces no finding. Optional author additions live in
+`quality/voice.json` under `profanity` and `formal`.
+
+Voice profiles are derived from the last approved Git commit, not the working
+tree. `weaver approve` rebuilds them after its approval commit. They are local
+derived files under `world-bible/voices/` and are ignored by the book's
+`.gitignore`, so editing them never creates pending scene changes.
+
+Voice checks use a combined per-feature z-distance threshold of 4.0, with zero
+variance guarded, and call a line “sounds like” another sufficiently evidenced
+character only when that character is at least 1.0 distance unit closer and a
+distinctive word, hard-contrast feature, or unusually large distance margin
+supports the comparison. Hard contrasts cover profanity against a zero-rate
+profile with at least 150 words and the long formal/conversational contrast
+described by the command output. Profiles are stamped with the approved
+manuscript hash and Git commit; working-tree edits do not make them stale.
+Voice findings are warnings for the author to judge; Weaver never decides that
+a voice is right.
+
 ## Claude Code hooks
 
 Run `weaver hooks install --root ./my-book` to merge Weaver's PreToolUse and
@@ -140,6 +192,9 @@ Re-derive them in order before accepting state again.
 | `status` | Summarize manuscript hash, words, scenes, and state freshness |
 | `check` | Run project, critical-path, repetition, and state gates |
 | `rules` | Run deterministic style rules (`--scene`, `--json` supported) |
+| `characters seed` | Add imported POV names to the character registry |
+| `voices build` | Build deterministic character voice profiles |
+| `voices check` | Show voice warnings (`--scene`, `--pending`, `--json` supported) |
 | `changes` | Show pending scene edits grouped by chapter (`--json` supported) |
 | `approve` | Save one chapter's pending edits as an approval |
 | `reject` | Save and restore one chapter's pending edits |

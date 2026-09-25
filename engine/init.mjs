@@ -34,7 +34,7 @@ export function initializeProject(target, { projectId = "untitled-book", title =
   writeFileSync(projectPath, `${JSON.stringify(project, null, 2)}\n`);
   const gitignorePath = join(destination, ".gitignore");
   const existingGitignore = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf8") : "";
-  const requiredIgnoreLines = ["node_modules/", ".weaver/tmp/", ".weaver/rejected/"];
+  const requiredIgnoreLines = ["node_modules/", ".weaver/tmp/", ".weaver/rejected/", "world-bible/voices/"];
   const missing = requiredIgnoreLines.filter((line) => !existingGitignore.split(/\r?\n/u).some((entry) => entry.trim() === line));
   if (missing.length) {
     const prefix = existingGitignore && !existingGitignore.endsWith("\n") ? "\n" : "";
