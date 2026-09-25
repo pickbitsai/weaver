@@ -13,6 +13,7 @@ import {
 } from "./manuscript.mjs";
 import { narrativeStateStatus, readStateManifest, statePath } from "./state.mjs";
 import { GENERATOR, HOMEPAGE, LICENSE_ID, PRODUCT_NAME, SCHEMA_BASE, VERSION } from "./identity.mjs";
+import { runRules } from "./rules.mjs";
 
 const RELEASE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const escapeHtml = (value) => value
@@ -28,13 +29,15 @@ export function runQualityChecks(root, project) {
   const duplicates = findHighSeverityDuplicates(scenes);
   const unapprovedDuplicates = filterIntentionalEchoes(root, duplicates);
   const state = narrativeStateStatus(root, project);
+  const rules = runRules(root, project);
   const issues = [];
   if (!criticalPath.ok) issues.push(`critical-path gate failed (${criticalPath.missing.length} missing)`);
   if (unapprovedDuplicates.length) issues.push(`repetition gate failed (${unapprovedDuplicates.length} unapproved duplicate(s))`);
   if (project.require_current_state_for_release && state.stale) {
     issues.push(`narrative state is stale from scene ${state.first_stale}`);
   }
-  return { ok: issues.length === 0, issues, scenes, criticalPath, duplicates, unapprovedDuplicates, state };
+  if (rules.blocking) issues.push(`style rules: ${rules.blocking} blocking finding(s)`);
+  return { ok: issues.length === 0, issues, scenes, criticalPath, duplicates, unapprovedDuplicates, state, rules };
 }
 
 function assembleHtml(project, scenes, releaseId) {

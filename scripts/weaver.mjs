@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { runDoctor } from "../engine/doctor.mjs";
 import { initializeProject } from "../engine/init.mjs";
@@ -12,6 +12,8 @@ import { DEFAULT_CHAPTER_PATTERN, importBook } from "../engine/import.mjs";
 import { exportBook } from "../engine/export.mjs";
 import { acceptNarrativeState, buildGroundingPacket, narrativeStateStatus } from "../engine/state.mjs";
 import { GENERATOR } from "../engine/identity.mjs";
+import { installHooks, runHook } from "../engine/hooks.mjs";
+import { runRules } from "../engine/rules.mjs";
 
 const argv = process.argv.slice(2);
 const command = argv.shift() || "help";
@@ -135,10 +137,51 @@ try {
       words: checks.scenes.reduce((sum, scene) => sum + scene.words, 0),
       critical_path: checks.criticalPath,
       unapproved_high_similarity_duplicates: checks.unapprovedDuplicates,
-      narrative_state: checks.state
-    };
+        narrative_state: checks.state,
+        rules: { blocking: checks.rules.blocking, warnings: checks.rules.warnings }
+      };
     print(report);
     if (!checks.ok) process.exitCode = 1;
+  } else if (command === "rules") {
+    warnAboutDoctor(root);
+    const { project } = projectContext();
+    const selectedScene = option("--scene");
+    const result = runRules(root, project, { sceneIds: selectedScene ? [selectedScene] : null });
+    if (argv.includes("--json")) print(result);
+    else if (!result.findings.length) print("No style rule findings.");
+    else {
+      let currentScene = null;
+      let currentRule = null;
+      for (const finding of result.findings) {
+        if (finding.scene_id !== currentScene) {
+          currentScene = finding.scene_id;
+          currentRule = null;
+          print(`Scene ${finding.scene_id}`);
+        }
+        if (finding.rule_id !== currentRule) {
+          currentRule = finding.rule_id;
+          print(`  ${finding.rule_id}`);
+        }
+        print(`    ${finding.severity}: paragraph ${finding.paragraph}: ${finding.excerpt} — ${finding.message}`);
+      }
+      print(`\n${result.blocking} blocking, ${result.warnings} warning(s); ${result.rules_checked} rule(s) checked.`);
+    }
+    if (result.blocking) process.exitCode = 1;
+  } else if (command === "hooks" && positional() === "install") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const result = installHooks(root);
+      print(`${result.changed ? (result.created ? "Created" : "Updated") : "Already installed"} ${result.path}`);
+    }
+  } else if (command === "hook" && ["pre", "post"].includes(positional())) {
+    // Hook processes are intentionally fail-open: malformed input and broken books never stop an edit.
+    try {
+      const payload = JSON.parse(readFileSync(0, "utf8"));
+      const output = runHook(positional(), payload);
+      if (output) print(output);
+    } catch {
+      // A broken guard must never stop an author's edit.
+    }
   } else if (command === "state:status") {
     warnAboutDoctor(root);
     const { project } = projectContext();
@@ -208,6 +251,8 @@ Usage:
   weaver doctor [--root directory] [--json]
   weaver status [--root directory]
   weaver check [--root directory]
+  weaver rules [--root directory] [--scene scene-id] [--json]
+  weaver hooks install [--root directory]
   weaver state:status [--root directory]
   weaver state:accept [--root directory] [--through scene-id]
   weaver grounding <scene-id> [--root directory] [--output file]
@@ -222,6 +267,8 @@ Usage:
   weaver doctor [--root directory] [--json]
   weaver status [--root directory]
   weaver check [--root directory]
+  weaver rules [--root directory] [--scene scene-id] [--json]
+  weaver hooks install [--root directory]
   weaver state:status [--root directory]
   weaver state:accept [--root directory] [--through scene-id]
   weaver grounding <scene-id> [--root directory] [--output file]

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/pickbitsai/weaver/main/contracts/rules.schema.json",
+  "title": "Weaver quality rules",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "version", "rules"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "rules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "base": {
+      "type": "object",
+      "required": ["id", "type", "severity", "message"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "type": { "enum": ["count-per-words", "phrase-list", "sentence-start-share", "repeated-sentence-starts", "max-per-paragraph", "regex"] },
+        "severity": { "enum": ["block", "warn"] },
+        "message": { "type": "string", "minLength": 1 },
+        "scope": { "enum": ["all", "narration", "dialogue"] }
+      }
+    },
+    "rule": {
+      "oneOf": [
+        { "allOf": [{ "$ref": "#/$defs/base" }, { "properties": { "type": { "const": "count-per-words" }, "text": { "type": "string" }, "max": { "type": "number", "exclusiveMinimum": 0 }, "per_words": { "type": "number", "exclusiveMinimum": 0 }, "unit": { "enum": ["scene", "chapter"] } }, "required": ["text", "max", "per_words", "unit"] }] },
+        { "allOf": [{ "$ref": "#/$defs/base" }, { "properties": { "type": { "const": "phrase-list" }, "phrases": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }, "case_sensitive": { "type": "boolean" } }, "required": ["phrases"] }] },
+        { "allOf": [{ "$ref": "#/$defs/base" }, { "properties": { "type": { "const": "sentence-start-share" }, "word": { "type": "string", "minLength": 1 }, "max_share": { "type": "number", "minimum": 0, "maximum": 1 }, "min_sentences": { "type": "integer", "minimum": 1 }, "unit": { "enum": ["paragraph", "scene"] } }, "required": ["word", "max_share", "min_sentences", "unit"] }] },
+        { "allOf": [{ "$ref": "#/$defs/base" }, { "properties": { "type": { "const": "repeated-sentence-starts" }, "max_run": { "type": "integer", "minimum": 1 } }, "required": ["max_run"] }] },
+        { "allOf": [{ "$ref": "#/$defs/base" }, { "properties": { "type": { "const": "max-per-paragraph" }, "text": { "type": "string" }, "max": { "type": "integer", "minimum": 0 } }, "required": ["text", "max"] }] },
+        { "allOf": [{ "$ref": "#/$defs/base" }, { "properties": { "type": { "const": "regex" }, "pattern": { "type": "string" }, "flags": { "type": "string" } }, "required": ["pattern"] }] }
+      ]
+    }
+  }
+}

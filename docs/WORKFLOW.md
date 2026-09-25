@@ -24,6 +24,9 @@ weaver check --root ./my-book
 weaver export --format docx --out ./repaired-book.docx --root ./my-book
 ```
 
+The repair path uses the same deterministic style-rules gate: `check` reports
+blocking findings and `release` refuses them, while warnings remain advisory.
+
 The import record under `imports/` preserves the source hash, front matter,
 chapter and scene counts, POV decisions, and scene word counts. Imported books
 begin with missing or stale narrative state by design; `check` reports that
@@ -50,12 +53,28 @@ The reusable role prompt is in `prompts/architect.md`.
 
 ## 3. Draft
 
+Install the Claude Code hooks once for this book so style rules run around AI
+prose edits:
+
+```bash
+weaver hooks install --root ./my-book
+```
+
+The pre-hook supplies the editorial rules before an edit. The post-hook checks
+the edited scene and reports or blocks deterministic findings. Hooks fail open,
+so a hook problem never interrupts an edit; the rules gate in `check` and
+`release` remains authoritative.
+
 Write only the delta. Do not re-introduce familiar characters, settings,
 relationships, or rules unless the scene deliberately re-anchors something the
 reader may have forgotten. Preserve the project's voice constraints and end on
 a changed state or resonant image.
 
 ## 4. Review
+
+Run `weaver rules --root ./my-book` during drafting or repair to inspect style
+findings directly. A blocking style finding makes `check` fail; warnings remain
+visible without failing the gate.
 
 Run three independent lenses:
 

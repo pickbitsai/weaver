@@ -139,6 +139,10 @@ export function parseEscapedProse(value) {
   return escapedProseTokens(String(value));
 }
 
+export function readerText(value) {
+  return parseEscapedProse(value).map((token) => token.text).join("");
+}
+
 export function canonicalItalic(value) {
   const tokens = [];
   pushItalic(tokens, String(value));

@@ -68,6 +68,30 @@ Scene prose uses Markdown-style `*italics*`; literal asterisks and backslashes
 are escaped. Bold Markdown is intentionally unsupported and is imported as
 literal text.
 
+## Style rules
+
+Books may define deterministic prose checks in `quality/rules.json`. Rules are
+versioned, have a unique id, a severity (`block` or `warn`), and a plain author
+message. Weaver supports em-dash counts, phrase lists, sentence-start shares,
+repeated sentence starts, per-paragraph counts, and custom regular expressions.
+Rules run on reader text: escaped punctuation is unescaped and italic markers
+are removed before measuring. A rule can apply to all text, narration, or
+dialogue. Dialogue is text inside straight or curly quotes; an opening quote at
+the start of the next paragraph continues a multi-paragraph speech. This is a
+simple editorial heuristic, not a full Markdown or natural-language parser.
+
+Run `weaver rules --root ./my-book` for a human report or add `--json` for a
+machine-readable result. Blocking findings fail `check` and prevent release;
+warnings are reported but do not fail the gate.
+
+## Claude Code hooks
+
+Run `weaver hooks install --root ./my-book` to merge Weaver's PreToolUse and
+PostToolUse hooks into `.claude/settings.json`. The pre-hook supplies the
+editorial rules and rule messages before scene edits, and the post-hook checks
+the edited scene and blocks only when a blocking rule fires. Hooks fail open on
+malformed input or internal errors; `check` and `release` remain authoritative.
+
 The GitHub install works today. The equivalent registry package will be
 `@pickbitsai/weaver` after npm publication.
 
@@ -95,6 +119,8 @@ Re-derive them in order before accepting state again.
 | `doctor` | Check the book folder, Git, host, and Weaver installation |
 | `status` | Summarize manuscript hash, words, scenes, and state freshness |
 | `check` | Run project, critical-path, repetition, and state gates |
+| `rules` | Run deterministic style rules (`--scene`, `--json` supported) |
+| `hooks install` | Install or merge Claude Code scene-edit hooks |
 | `state:status` | Show current and stale derived-state records |
 | `state:accept` | Stamp reviewed narrative state through a scene |
 | `grounding <scene-id>` | Assemble the context packet for a writing pass |
