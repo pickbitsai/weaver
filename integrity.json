@@ -36,7 +36,7 @@
     "engine/release.mjs": "ffe5cbc72e888823c9b74514629fe2dcd0b4594df55b121b59fabf9c99d99fe1",
     "engine/rules.mjs": "5b75d64c8a2eadb7703cf75b9c8778e9b90613856f6b29c8c0f4ad3dc37f6b93",
     "engine/state.mjs": "89204ffd1d349761d8977860f976099d784cd7b14be0ab91f63b3d9a61bcccb1",
-    "engine/voice.mjs": "fbf4c946acaf8490cb1b134f72e941394a439172e0c2432046c47daf09e756e4",
+    "engine/voice.mjs": "1830ff86c67cc6fa7e84c943b9637cd6ecdfd9eca1d6542be5dcd83d91b29cab",
     "loop.manifest.json": "340b33bb8b03c60ce4997b9182baa18435fc3d6716d660ea8d15ae466663abc0",
     "package.json": "d1b143a5559d860707d5085265a175e64ef07af09cf12411634e3522c0cb39be",
     "prompts/architect.md": "51ed331812edfb4801fd60948293eb40f960a2735d949376d80488dc1c3724e4",

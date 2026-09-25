@@ -8,7 +8,7 @@ import { readerText } from "./prose.mjs";
 import { loadCharacters } from "./characters.mjs";
 
 const VOICES_ROOT = join("world-bible", "voices");
-const PROFILE_VERSION = 1;
+const PROFILE_VERSION = 2;
 export const EVIDENCE_MINIMUM = { lines: 8, words: 80 };
 export const VOICE_DISTANCE_THRESHOLD = 4;
 export const SOUNDS_LIKE_MARGIN = 1;
@@ -119,18 +119,22 @@ export function lineFeatures(text, settings = { profanity: [], formal: [] }) {
   const contractions = [...value.matchAll(/\b[\p{L}\p{N}]+['’][\p{L}\p{N}]+\b/gu)].length;
   const profanity = profanityCount(value, [...BUILTIN_PROFANITY, ...settings.profanity]);
   const formal = markerCount(value, [...BUILTIN_FORMAL, ...settings.formal]);
+  const exclamations = [...value.matchAll(/!/gu)].length;
+  const questions = [...value.matchAll(/\?/gu)].length;
   return {
     words_per_sentence: sentences ? words / sentences : 0,
     contractions_per_100_words: words ? contractions * 100 / words : 0,
     profanity_per_100_words: words ? profanity * 100 / words : 0,
-    exclamation_share: sentences ? [...value.matchAll(/!/gu)].length / sentences : 0,
-    question_share: sentences ? [...value.matchAll(/\?/gu)].length / sentences : 0,
+    exclamation_share: sentences ? exclamations / sentences : 0,
+    question_share: sentences ? questions / sentences : 0,
     formal_markers_per_100_words: words ? formal * 100 / words : 0,
     words,
     sentences,
     contractions,
     profanity,
-    formal_markers: formal
+    formal_markers: formal,
+    questions,
+    exclamations
   };
 }
 
@@ -265,24 +269,77 @@ function standardDeviation(values, average = mean(values)) {
   return Math.sqrt(mean(values.map((value) => (value - average) ** 2)));
 }
 
+const PROFILE_TOTAL_KEYS = ["lines", "words", "sentences", "contractions", "profanity", "formal_markers", "questions", "exclamations"];
+
+function normalizedLineText(text) {
+  return String(text).trim().replace(/\s+/gu, " ");
+}
+
+function lineRecordKey(record) {
+  return `${record.scene_id}\u0000${record.paragraph}\u0000${record.text_sha256}`;
+}
+
+function lineKey(line) {
+  return `${line.scene_id}\u0000${line.paragraph}\u0000${sha256(normalizedLineText(line.text))}`;
+}
+
+function lineRecord(line) {
+  const features = line.features;
+  return {
+    scene_id: line.scene_id,
+    paragraph: line.paragraph,
+    text_sha256: sha256(normalizedLineText(line.text)),
+    features: {
+      words: features.words,
+      sentences: features.sentences,
+      contractions: features.contractions,
+      profanity: features.profanity,
+      formal_markers: features.formal_markers,
+      questions: features.questions,
+      exclamations: features.exclamations,
+      words_per_sentence: features.words_per_sentence,
+      contractions_per_100_words: features.contractions_per_100_words,
+      profanity_per_100_words: features.profanity_per_100_words,
+      exclamation_share: features.exclamation_share,
+      question_share: features.question_share,
+      formal_markers_per_100_words: features.formal_markers_per_100_words
+    }
+  };
+}
+
+function totalsForLines(lines) {
+  return {
+    lines: lines.length,
+    words: lines.reduce((sum, line) => sum + line.features.words, 0),
+    sentences: lines.reduce((sum, line) => sum + line.features.sentences, 0),
+    contractions: lines.reduce((sum, line) => sum + line.features.contractions, 0),
+    profanity: lines.reduce((sum, line) => sum + line.features.profanity, 0),
+    formal_markers: lines.reduce((sum, line) => sum + line.features.formal_markers, 0),
+    questions: lines.reduce((sum, line) => sum + line.features.questions, 0),
+    exclamations: lines.reduce((sum, line) => sum + line.features.exclamations, 0)
+  };
+}
+
+function aggregateFeatures(totals) {
+  return {
+    mean_words_per_sentence: totals.sentences ? totals.words / totals.sentences : 0,
+    contractions_per_100_words: totals.words ? totals.contractions * 100 / totals.words : 0,
+    profanity_per_100_words: totals.words ? totals.profanity * 100 / totals.words : 0,
+    exclamation_share: totals.sentences ? totals.exclamations / totals.sentences : 0,
+    question_share: totals.sentences ? totals.questions / totals.sentences : 0,
+    formal_markers_per_100_words: totals.words ? totals.formal_markers * 100 / totals.words : 0
+  };
+}
+
+function sortedLineRecords(lines) {
+  return lines.map(lineRecord).sort((left, right) => lineRecordKey(left).localeCompare(lineRecordKey(right)));
+}
+
 function profileFor(character, lines, settings, hash, headCommit) {
   const own = lines.filter((line) => line.speaker === character.id).map((line) => ({ ...line, features: lineFeatures(line.text, settings) }));
   const values = Object.fromEntries(FEATURE_KEYS.map((key) => [key, own.map((line) => line.features[key])]));
-  const totalWords = own.reduce((sum, line) => sum + line.features.words, 0);
-  const totalSentences = own.reduce((sum, line) => sum + line.features.sentences, 0);
-  const totalContractions = own.reduce((sum, line) => sum + line.features.contractions, 0);
-  const totalProfanity = own.reduce((sum, line) => sum + line.features.profanity, 0);
-  const totalExclamations = own.reduce((sum, line) => sum + Math.round(line.features.exclamation_share * line.features.sentences), 0);
-  const totalQuestions = own.reduce((sum, line) => sum + Math.round(line.features.question_share * line.features.sentences), 0);
-  const totalFormal = own.reduce((sum, line) => sum + line.features.formal_markers, 0);
-  const features = {
-    mean_words_per_sentence: totalSentences ? totalWords / totalSentences : 0,
-    contractions_per_100_words: totalWords ? totalContractions * 100 / totalWords : 0,
-    profanity_per_100_words: totalWords ? totalProfanity * 100 / totalWords : 0,
-    exclamation_share: totalSentences ? totalExclamations / totalSentences : 0,
-    question_share: totalSentences ? totalQuestions / totalSentences : 0,
-    formal_markers_per_100_words: totalWords ? totalFormal * 100 / totalWords : 0
-  };
+  const totals = totalsForLines(own);
+  const features = aggregateFeatures(totals);
   const distribution = Object.fromEntries(FEATURE_KEYS.map((key) => {
     const average = mean(values[key]);
     return [key, { mean: average, standard_deviation: standardDeviation(values[key], average) }];
@@ -293,7 +350,7 @@ function profileFor(character, lines, settings, hash, headCommit) {
       const sd = distribution[key].standard_deviation;
       return sum + (sd ? ((line.features[key] - distribution[key].mean) / sd) ** 2 : 0);
     }, 0))
-  })).sort((left, right) => left.distance - right.distance || left.scene_id.localeCompare(right.scene_id) || left.paragraph - right.paragraph);
+  })).sort((left, right) => left.distance - right.distance || lineKey(left).localeCompare(lineKey(right)));
   const wordCounts = new Map();
   const otherCounts = new Map();
   for (const line of own) {
@@ -323,9 +380,11 @@ function profileFor(character, lines, settings, hash, headCommit) {
     approved_manuscript_sha256: hash,
     head_commit: headCommit,
     approved_head_commit: headCommit,
-    lines: own.length,
-    words: totalWords,
-    enough_evidence: own.length >= EVIDENCE_MINIMUM.lines && totalWords >= EVIDENCE_MINIMUM.words,
+    lines: totals.lines,
+    words: totals.words,
+    enough_evidence: totals.lines >= EVIDENCE_MINIMUM.lines && totals.words >= EVIDENCE_MINIMUM.words,
+    totals,
+    line_records: sortedLineRecords(own),
     features,
     distribution,
     distinctive_words: distinctiveWords,
@@ -360,6 +419,80 @@ function loadProfiles(root, characters) {
     } catch (error) {
       throw new Error(`invalid world-bible/voices/${character.id}.json: ${error.message}`);
     }
+  });
+}
+
+function recordFeature(record, key) {
+  return record.features?.[key] ?? 0;
+}
+
+function recordTotals(record) {
+  return {
+    lines: 1,
+    words: recordFeature(record, "words"),
+    sentences: recordFeature(record, "sentences"),
+    contractions: recordFeature(record, "contractions"),
+    profanity: recordFeature(record, "profanity"),
+    formal_markers: recordFeature(record, "formal_markers"),
+    questions: recordFeature(record, "questions"),
+    exclamations: recordFeature(record, "exclamations")
+  };
+}
+
+function profileTotals(profile, records) {
+  return Object.fromEntries(PROFILE_TOTAL_KEYS.map((key) => [
+    key,
+    Number.isFinite(profile.totals?.[key])
+      ? profile.totals[key]
+      : key === "lines"
+        ? (profile.lines ?? records.length)
+        : key === "words"
+          ? (profile.words ?? 0)
+          : 0
+  ]));
+}
+
+function comparisonProfile(profile, line) {
+  if (!Array.isArray(profile.line_records)) return { profile, matched: false, legacy: true };
+  const target = lineKey(line);
+  const matches = profile.line_records.filter((record) => lineRecordKey(record) === target);
+  if (!matches.length) return { profile, matched: false, legacy: false };
+
+  // Exclude the checked line and every other line by this speaker in its paragraph.
+  const excluded = profile.line_records.filter((record) => record.scene_id === line.scene_id && record.paragraph === line.paragraph);
+  const excludedSet = new Set(excluded);
+  const remaining = profile.line_records.filter((record) => !excludedSet.has(record));
+  const totals = profileTotals(profile, profile.line_records);
+  for (const record of excluded) {
+    const contribution = recordTotals(record);
+    for (const key of PROFILE_TOTAL_KEYS) totals[key] = Math.max(0, totals[key] - contribution[key]);
+  }
+  const features = aggregateFeatures(totals);
+  const distribution = Object.fromEntries(FEATURE_KEYS.map((key) => {
+    const values = remaining.map((record) => recordFeature(record, key));
+    const average = mean(values);
+    return [key, { mean: average, standard_deviation: standardDeviation(values, average) }];
+  }));
+  return {
+    matched: true,
+    legacy: false,
+    profile: {
+      ...profile,
+      lines: totals.lines,
+      words: totals.words,
+      enough_evidence: totals.lines >= EVIDENCE_MINIMUM.lines && totals.words >= EVIDENCE_MINIMUM.words,
+      totals,
+      features,
+      distribution
+    }
+  };
+}
+
+function evidenceWithoutLine(profile, line) {
+  const target = lineKey(line);
+  return (profile.evidence || []).filter((evidence) => {
+    if (typeof evidence.text !== "string" || evidence.scene_id === undefined || evidence.paragraph === undefined) return true;
+    return lineKey(evidence) !== target;
   });
 }
 
@@ -524,19 +657,26 @@ export function runVoiceCheck(root, project, { sceneIds = null, pendingScenes = 
   }).map(({ character }) => character.name);
   const findings = [];
   const notes = [];
+  const legacyNoted = new Set();
   for (const line of lines) {
     const record = profiles.get(line.speaker);
     if (!record) continue;
     const { character, profile } = record;
     const scene = scenes.find((candidate) => candidate.id === line.scene_id);
     if (!pendingLineFilter(lines, scene, pendingScenes)(line)) continue;
-    if (!profile.enough_evidence) {
-      notes.push({ scene_id: line.scene_id, paragraph: line.paragraph, speaker: character.name, message: `not enough of their lines yet (${profile.lines} lines, ${profile.words} words)` });
+    const comparison = comparisonProfile(profile, line);
+    if (comparison.legacy && !legacyNoted.has(character.id)) {
+      notes.push({ scene_id: line.scene_id, paragraph: line.paragraph, speaker: character.name, message: "voice profile has no per-line data; run weaver voices build" });
+      legacyNoted.add(character.id);
+    }
+    const checkedProfile = comparison.profile;
+    if (!checkedProfile.enough_evidence) {
+      notes.push({ scene_id: line.scene_id, paragraph: line.paragraph, speaker: character.name, message: `not enough of their lines yet (${checkedProfile.lines} lines, ${checkedProfile.words} words)` });
       continue;
     }
     const features = lineFeatures(line.text, settings);
-    const analysis = voiceSignals(line.text, features, profile, settings);
-    const distance = profileDistance(features, profile);
+    const analysis = voiceSignals(line.text, features, checkedProfile, settings);
+    const distance = profileDistance(features, checkedProfile);
     const hardContrast = analysis.hard.profanity || analysis.hard.formal;
     const independentSignals = Object.values(analysis.signals).filter(Boolean).length;
     if (!hardContrast && independentSignals < 2) continue;
@@ -547,8 +687,8 @@ export function runVoiceCheck(root, project, { sceneIds = null, pendingScenes = 
       paragraph: line.paragraph,
       speaker: character.name,
       line: line.text,
-      reasons: reasonFor(line.text, features, profile, settings, analysis),
-      evidence: profile.evidence.slice(0, 3)
+      reasons: reasonFor(line.text, features, checkedProfile, settings, analysis),
+      evidence: evidenceWithoutLine(checkedProfile, line).slice(0, 3)
     };
     finding.reason = finding.reasons[0];
     const candidates = records.filter(({ character: other, profile: otherProfile }) => other.id !== character.id && otherProfile.enough_evidence)
@@ -568,7 +708,7 @@ export function runVoiceCheck(root, project, { sceneIds = null, pendingScenes = 
       && (best.shared.length || margin >= SOUNDS_LIKE_MARGIN * 2)))) {
       finding.maybe_sounds_like = {
         character: best.character.name,
-        evidence: best.profile.evidence.slice(0, 2)
+        evidence: evidenceWithoutLine(best.profile, line).slice(0, 2)
       };
     }
     findings.push(finding);
