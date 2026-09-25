@@ -33,6 +33,12 @@ npx weaver grounding 1-1 --root ./my-book
 The GitHub install works today. The equivalent registry package will be
 `@pickbitsai/weaver` after npm publication.
 
+## Supported setup
+
+Keep the book in its own folder under Git. Install Weaver as a package outside
+the book; never copy Weaver into the book folder. Weaver runs with an AI that
+can run commands, such as Claude Code, and `weaver doctor` checks this setup.
+
 After writing or revising a scene, update its corresponding
 `narrative-state/<chapter>-<scene>.md`, then explicitly accept the derived state:
 
@@ -50,6 +56,7 @@ Re-derive them in order before accepting state again.
 | Command | Purpose |
 | --- | --- |
 | `init <directory>` | Create a generic book workspace |
+| `doctor` | Check the book folder, Git, host, and Weaver installation |
 | `status` | Summarize manuscript hash, words, scenes, and state freshness |
 | `check` | Run project, critical-path, repetition, and state gates |
 | `state:status` | Show current and stale derived-state records |

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +38,15 @@ function weaver(args) {
   return runNpm(["exec", "--", "weaver", ...args], consumer);
 }
 
+function weaverResult(args) {
+  return spawnSync(process.execPath, [npmCli, "exec", "--", "weaver", ...args], {
+    cwd: consumer,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+}
+
 try {
   mkdirSync(consumer, { recursive: true });
   writeFileSync(
@@ -61,6 +70,10 @@ try {
   assert.match(readFileSync(installedNotice, "utf8"), /PickBits Weaver/);
   weaver(["init", book, "--id", "consumer-book", "--title", "Consumer Book"]);
 
+  const doctor = JSON.parse(weaver(["doctor", "--json", "--root", book]));
+  assert.equal(doctor.checks.find((check) => check.id === "install-integrity").status, "pass");
+  assert.equal(doctor.ok, true);
+
   const status = JSON.parse(weaver(["status", "--root", book]));
   assert.equal(status.project_id, "consumer-book");
   assert.equal(status.scenes, 1);
@@ -75,6 +88,22 @@ try {
   );
   assert.equal(release.release_id, "consumer-smoke");
   assert.equal(release.source.scene_count, 1);
+
+  appendFileSync(
+    join(consumer, "node_modules", "@pickbitsai", "weaver", "engine", "state.mjs"),
+    " "
+  );
+  const brokenDoctor = weaverResult(["doctor", "--json", "--root", book]);
+  assert.notEqual(brokenDoctor.status, 0);
+  assert.ok(brokenDoctor.stdout, brokenDoctor.stderr);
+  const brokenReport = JSON.parse(brokenDoctor.stdout);
+  const integrity = brokenReport.blocking.find((finding) => finding.id === "install-integrity");
+  assert.ok(integrity);
+  assert.ok(integrity.paths.includes("engine/state.mjs"));
+  const refused = weaverResult(["release", "--root", book, "--id", "consumer-after-break"]);
+  assert.notEqual(refused.status, 0);
+  assert.equal(JSON.parse(refused.stdout).error, "Weaver's own files have been changed");
+  assert.equal(existsSync(join(book, "releases", "consumer-after-break")), false);
 
   console.log("consumer smoke passed: packed, installed, initialized, checked, and released");
 } finally {

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { loadScenes } from "../engine/manuscript.mjs";
@@ -19,6 +20,8 @@ import {
 function withBook(run) {
   const root = mkdtempSync(join(tmpdir(), "weaver-test-"));
   cpSync(resolve("templates/book"), root, { recursive: true });
+  const git = spawnSync("git", ["init", "-q"], { cwd: root, encoding: "utf8" });
+  assert.equal(git.status, 0, git.stderr);
   try {
     return run(root, readProject(root));
   } finally {

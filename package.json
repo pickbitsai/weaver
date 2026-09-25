@@ -24,11 +24,13 @@
   },
   "files": [
     "contracts/",
+    "contracts/integrity.schema.json",
     "docs/",
     "engine/",
     "prompts/",
     "scripts/",
     "templates/",
+    "integrity.json",
     "README.md",
     "LICENSE",
     "NOTICE",
@@ -36,7 +38,8 @@
     "loop.manifest.json"
   ],
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "integrity": "node scripts/integrity.mjs --write",
+    "test": "node --test test/*.test.mjs && node scripts/integrity.mjs --check",
     "test:consumer": "node test/consumer-install.mjs",
     "leakscan": "node test/leakscan.mjs",
     "smoke": "node scripts/weaver.mjs status --root templates/book",

@@ -1,5 +1,13 @@
 # Writing and revision workflow
 
+## 0. Check the setup
+
+Before working on a book, run:
+
+```bash
+weaver doctor --root ./my-book
+```
+
 ## 1. Lock the architecture
 
 Before drafting, define the ending, scene-level beat map, reveal/reframe ledger,

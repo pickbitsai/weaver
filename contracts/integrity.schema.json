@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pickbits.ai/schemas/weaver/integrity-1.json",
+  "title": "PickBits Weaver install integrity manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "generator", "version", "files"],
+  "properties": {
+    "$schema": { "const": "https://pickbits.ai/schemas/weaver/integrity-1.json" },
+    "generator": { "type": "string" },
+    "version": { "type": "string" },
+    "files": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+    }
+  }
+}
