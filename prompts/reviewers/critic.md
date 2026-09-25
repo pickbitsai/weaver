@@ -1,3 +1,4 @@
+<!-- PickBits Weaver · Apache-2.0 · https://github.com/pickbitsai/weaver -->
 # Critic reviewer
 
 Judge the scene as a demanding first-time reader.

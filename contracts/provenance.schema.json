@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pickbits.ai/schemas/weaver/provenance-1.json",
+  "title": "PickBits Weaver release provenance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "generator",
+    "product",
+    "version",
+    "license",
+    "homepage",
+    "project_id",
+    "release_id",
+    "created_at"
+  ],
+  "properties": {
+    "$schema": { "const": "https://pickbits.ai/schemas/weaver/provenance-1.json" },
+    "generator": { "type": "string" },
+    "product": { "const": "PickBits Weaver" },
+    "version": { "type": "string" },
+    "license": { "const": "Apache-2.0" },
+    "homepage": { "const": "https://github.com/pickbitsai/weaver" },
+    "project_id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+    "release_id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

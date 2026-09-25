@@ -1,3 +1,4 @@
+<!-- PickBits Weaver · Apache-2.0 · https://github.com/pickbitsai/weaver -->
 # Architect role
 
 Use the grounding packet, project outline, and style guide to design one scene.

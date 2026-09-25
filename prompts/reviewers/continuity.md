@@ -1,3 +1,4 @@
+<!-- PickBits Weaver · Apache-2.0 · https://github.com/pickbitsai/weaver -->
 # Continuity reviewer
 
 Read the scene, its grounding packet, and the canonical project references.

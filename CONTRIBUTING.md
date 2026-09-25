@@ -31,3 +31,5 @@ library unless a change has a compelling portability benefit.
 
 Open a focused pull request and describe the behavior being changed, the
 evidence added, and the commands used to verify it.
+
+Contributions are accepted under Apache-2.0.

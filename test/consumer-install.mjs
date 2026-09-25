@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -54,6 +56,9 @@ try {
     ["install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund", tarball],
     consumer
   );
+  const installedNotice = join(consumer, "node_modules", "@pickbitsai", "weaver", "NOTICE");
+  assert.ok(existsSync(installedNotice), "NOTICE is missing from the packed package");
+  assert.match(readFileSync(installedNotice, "utf8"), /PickBits Weaver/);
   weaver(["init", book, "--id", "consumer-book", "--title", "Consumer Book"]);
 
   const status = JSON.parse(weaver(["status", "--root", book]));

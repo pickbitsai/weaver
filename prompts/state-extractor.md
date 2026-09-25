@@ -1,3 +1,4 @@
+<!-- PickBits Weaver · Apache-2.0 · https://github.com/pickbitsai/weaver -->
 # Narrative-state extractor role
 
 Compare the reviewed scene against its entering narrative state. Update the
