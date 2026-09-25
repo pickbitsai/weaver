@@ -5,10 +5,13 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { countWords, loadScenes } from "./manuscript.mjs";
 import { readProject } from "./project.mjs";
 import { loadRules, runRules } from "./rules.mjs";
+import { otherPendingChapters } from "./changes.mjs";
 
 const MATCHER = "Edit|Write|MultiEdit";
 const PRE_COMMAND = "npx --no-install weaver hook pre";
 const POST_COMMAND = "npx --no-install weaver hook post";
+
+export const WEAVER_HOOK_COMMANDS = { pre: PRE_COMMAND, post: POST_COMMAND, matcher: MATCHER };
 
 function hookEntry(matcher, command) {
   return { matcher, hooks: [{ type: "command", command }] };
@@ -89,6 +92,14 @@ function findingText(finding) {
 function postHook(payload) {
   const scene = hookScene(payload);
   if (!scene) return null;
+  const otherChapters = otherPendingChapters(scene.cwd, scene.project, Number(scene.sceneId.split("-")[0]));
+  if (otherChapters.length) {
+    const chapters = otherChapters.join(", ");
+    return {
+      decision: "block",
+      reason: `Chapter ${chapters} has changes waiting for the author. Finish that chapter and ask the author to approve or reject it before editing chapter ${scene.sceneId.split("-")[0]}.`
+    };
+  }
   const result = runRules(scene.cwd, scene.project, { sceneIds: [scene.sceneId] });
   if (result.blocking) {
     const blocking = result.findings.filter((finding) => finding.severity === "block").map(findingText).join("\n");

@@ -90,14 +90,38 @@ test("hooks install merges unrelated settings and is idempotent", () => {
   }
 });
 
-test("hooks install uses the doctor refusal", () => {
+test("post hook blocks editing another chapter while one chapter is pending", () => {
+  const root = book();
+  try {
+    const secondDirectory = join(root, "manuscript", "chapter-02", "scene-01");
+    mkdirSync(secondDirectory, { recursive: true });
+    writeFileSync(join(secondDirectory, "scene.md"), `# Chapter 2, Scene 1\n\n**POV:** Protagonist\n\n---\n\nA second chapter scene carries the consequence forward.\n\n---\n\n**Words:** 9\n`);
+    const first = scenePath(root);
+    writeFileSync(first, readFileSync(first, "utf8").replace("different state.", "different and changed state."));
+    const result = cli(["hook", "post"], root, JSON.stringify({ cwd: root, tool_name: "Edit", tool_input: { file_path: join(secondDirectory, "scene.md") } }));
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.decision, "block");
+    assert.match(output.reason, /Chapter 1 has changes waiting/);
+    assert.match(output.reason, /editing chapter 2/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hooks install still uses the doctor refusal for a broken book", () => {
   const root = book();
   try {
     rmSync(join(root, ".git"), { recursive: true, force: true });
+    // New books ship with hooks, so strip them first: a real install would add them back, which
+    // makes "byte-identical afterwards" prove the refused command wrote nothing.
+    const settingsPath = join(root, ".claude", "settings.json");
+    const stripped = `${JSON.stringify({ marker: "kept", hooks: {} }, null, 2)}\n`;
+    writeFileSync(settingsPath, stripped);
     const result = cli(["hooks", "install"], root);
     assert.equal(result.status, 1);
     assert.match(result.stdout, /Your book folder is not under Git/);
-    assert.equal(existsSync(join(root, ".claude", "settings.json")), false);
+    assert.equal(readFileSync(settingsPath, "utf8"), stripped);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

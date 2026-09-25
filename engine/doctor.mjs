@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compareIntegrity } from "./integrity.mjs";
 import { GENERATOR } from "./identity.mjs";
+import { WEAVER_HOOK_COMMANDS } from "./hooks.mjs";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -58,6 +59,20 @@ const FINDINGS = {
     title: "Command-running AI host",
     why: "PickBits Weaver runs with an AI that can run commands, such as Claude Code. Chat-only AIs (web chat windows) are not supported.",
     fix: "Use an AI that can run commands, such as Claude Code."
+  },
+  hooksInstalled: {
+    id: "hooks-installed",
+    problem: "Weaver's Claude Code hooks are not installed",
+    title: "Claude Code hooks installed",
+    why: "Without Weaver's hooks, AI scene edits are not protected by the chapter and style checks.",
+    fix: "Run `weaver hooks install` from the book folder."
+  },
+  hooksRunnable: {
+    id: "hooks-runnable",
+    problem: "Weaver's Claude Code hooks cannot run from this book folder",
+    title: "Claude Code hooks can run",
+    why: "Claude Code runs the hooks from the book folder, so Weaver must be installed there.",
+    fix: "Install Weaver in the book folder with npm."
   }
 };
 
@@ -114,6 +129,34 @@ function copiedWeaverEngine(bookRoot) {
   return walk(bookRoot);
 }
 
+function hookEntryInstalled(entries, command) {
+  return Array.isArray(entries) && entries.some((entry) => entry?.matcher === WEAVER_HOOK_COMMANDS.matcher
+    && Array.isArray(entry.hooks)
+    && entry.hooks.some((hook) => hook?.type === "command" && hook.command === command));
+}
+
+function hooksInstalled(bookRoot) {
+  try {
+    const settings = JSON.parse(readFileSync(join(bookRoot, ".claude", "settings.json"), "utf8"));
+    return Boolean(settings && typeof settings === "object" && !Array.isArray(settings)
+      && hookEntryInstalled(settings.hooks?.PreToolUse, WEAVER_HOOK_COMMANDS.pre)
+      && hookEntryInstalled(settings.hooks?.PostToolUse, WEAVER_HOOK_COMMANDS.post));
+  } catch {
+    return false;
+  }
+}
+
+function hooksRunnable(bookRoot) {
+  const executable = process.platform === "win32" ? "npx.cmd" : "npx";
+  const result = spawnSync(executable, ["--no-install", "weaver", "--version"], {
+    cwd: bookRoot,
+    encoding: "utf8",
+    timeout: 15_000,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  return result.status === 0 && result.stdout.includes(GENERATOR);
+}
+
 export function runDoctor({ bookRoot, packageRoot = PACKAGE_ROOT, nodeVersion = process.versions.node } = {}) {
   const root = resolve(bookRoot || process.cwd());
   const blocking = [];
@@ -155,6 +198,16 @@ export function runDoctor({ bookRoot, packageRoot = PACKAGE_ROOT, nodeVersion = 
     integrity.status === "intact" ? "pass" : "blocking",
     integrityFinding
   ));
+
+  const installed = hooksInstalled(root);
+  const hooksInstalledFinding = installed ? [] : [finding(FINDINGS.hooksInstalled)];
+  if (!installed) blocking.push(...hooksInstalledFinding);
+  checks.push(checkResult(FINDINGS.hooksInstalled.id, FINDINGS.hooksInstalled.title, installed ? "pass" : "blocking", hooksInstalledFinding));
+
+  const runnable = hooksRunnable(root);
+  const hooksRunnableFinding = runnable ? [] : [finding(FINDINGS.hooksRunnable)];
+  if (!runnable) warnings.push(...hooksRunnableFinding);
+  checks.push(checkResult(FINDINGS.hooksRunnable.id, FINDINGS.hooksRunnable.title, runnable ? "pass" : "warning", hooksRunnableFinding));
 
   const hostFinding = [finding(FINDINGS.host)];
   warnings.push(...hostFinding);

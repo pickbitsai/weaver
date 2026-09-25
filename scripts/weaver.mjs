@@ -14,6 +14,7 @@ import { acceptNarrativeState, buildGroundingPacket, narrativeStateStatus } from
 import { GENERATOR } from "../engine/identity.mjs";
 import { installHooks, runHook } from "../engine/hooks.mjs";
 import { runRules } from "../engine/rules.mjs";
+import { approveChapter, approvalHistory, describePendingChanges, rejectChapter, undoApproval } from "../engine/changes.mjs";
 
 const argv = process.argv.slice(2);
 const command = argv.shift() || "help";
@@ -43,6 +44,14 @@ function print(value) {
   process.stdout.write(`${typeof value === "string" ? value : JSON.stringify(value, null, 2)}\n`);
 }
 
+function pendingSummary(report) {
+  if (!report.pending) return "No scene changes are waiting for approval.";
+  return report.chapters.map((chapter) => {
+    const findingLabel = `${chapter.blocking} blocking style finding${chapter.blocking === 1 ? "" : "s"}`;
+    return `Chapter ${chapter.chapter}: ${chapter.scenes_changed} scene${chapter.scenes_changed === 1 ? "" : "s"} changed, +${chapter.words_added} / −${chapter.words_removed} words, ${findingLabel}`;
+  }).join("\n");
+}
+
 function importOmissionsSummary(notImported = {}) {
   const comments = Number(notImported.comments || 0);
   const footnotes = Number(notImported.footnotes || 0) + Number(notImported.endnotes || 0);
@@ -61,10 +70,13 @@ function warnAboutDoctor(root) {
   }
 }
 
-function refuseIfDoctorBlocks(root, command) {
+function refuseIfDoctorBlocks(root, command, { allowHookInstall = false } = {}) {
   const report = doctorReport(root);
-  if (report.ok) return false;
-  const [first, ...rest] = report.blocking;
+  const blocking = allowHookInstall
+    ? report.blocking.filter((finding) => finding.id !== "hooks-installed")
+    : report.blocking;
+  if (!blocking.length) return false;
+  const [first, ...rest] = blocking;
   print({
     error: first.problem,
     command,
@@ -167,8 +179,40 @@ try {
       print(`\n${result.blocking} blocking, ${result.warnings} warning(s); ${result.rules_checked} rule(s) checked.`);
     }
     if (result.blocking) process.exitCode = 1;
-  } else if (command === "hooks" && positional() === "install") {
+  } else if (command === "changes") {
+    const { project } = projectContext();
+    const report = describePendingChanges(root, project);
+    if (argv.includes("--json")) print(report);
+    else print(pendingSummary(report));
+  } else if (command === "approve") {
     if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const chapterOption = option("--chapter");
+      const result = approveChapter(root, project, chapterOption == null ? null : Number(chapterOption), option("--note", ""));
+      print(`Approval ${result.id}: Chapter ${result.chapter} approved.`);
+    }
+  } else if (command === "reject") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const chapterOption = option("--chapter");
+      const result = rejectChapter(root, project, chapterOption == null ? null : Number(chapterOption));
+      print(`Rejected Chapter ${result.chapter}. The rejected text was saved in ${result.path}.`);
+    }
+  } else if (command === "undo") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const result = undoApproval(root);
+      print(`Undo ${result.id}: the most recent approval was reversed.`);
+    }
+  } else if (command === "history") {
+    const history = approvalHistory(root);
+    if (argv.includes("--json")) print(history);
+    else if (!history.length) print("No approvals or undos yet.");
+    else print(history.map((entry) => `${entry.date} Chapter ${entry.chapter}: ${entry.note || "(no note)"} (${entry.type === "approval" ? "Approval" : entry.type === "undo" ? "Undo" : "Rejection"} ${entry.id})`).join("\n"));
+  } else if (command === "hooks" && positional() === "install") {
+    if (refuseIfDoctorBlocks(root, command, { allowHookInstall: true })) process.exitCode = 1;
     else {
       const result = installHooks(root);
       print(`${result.changed ? (result.created ? "Created" : "Updated") : "Already installed"} ${result.path}`);
@@ -240,7 +284,6 @@ try {
       print(exportBook(root, project, option("--format"), option("--out")));
     }
   } else if (command === "version" || command === "--version") {
-    warnAboutDoctor(root);
     print(GENERATOR);
   } else if (command === "help") {
     warnAboutDoctor(root);
@@ -252,6 +295,11 @@ Usage:
   weaver status [--root directory]
   weaver check [--root directory]
   weaver rules [--root directory] [--scene scene-id] [--json]
+  weaver changes [--root directory] [--json]
+  weaver approve [--chapter number] [--note "text"] [--root directory]
+  weaver reject [--chapter number] [--root directory]
+  weaver undo [--root directory]
+  weaver history [--root directory] [--json]
   weaver hooks install [--root directory]
   weaver state:status [--root directory]
   weaver state:accept [--root directory] [--through scene-id]
@@ -268,6 +316,11 @@ Usage:
   weaver status [--root directory]
   weaver check [--root directory]
   weaver rules [--root directory] [--scene scene-id] [--json]
+  weaver changes [--root directory] [--json]
+  weaver approve [--chapter number] [--note "text"] [--root directory]
+  weaver reject [--chapter number] [--root directory]
+  weaver undo [--root directory]
+  weaver history [--root directory] [--json]
   weaver hooks install [--root directory]
   weaver state:status [--root directory]
   weaver state:accept [--root directory] [--through scene-id]

@@ -145,6 +145,20 @@ test("doctor JSON output is machine-readable and identifies Weaver", () => {
   }
 });
 
+test("doctor blocks missing hooks and hooks install repairs that check", () => {
+  const book = makeBook();
+  try {
+    rmSync(join(book, ".claude", "settings.json"));
+    const report = runDoctor({ bookRoot: book });
+    assert.ok(report.blocking.some((finding) => finding.id === "hooks-installed"));
+    const result = runWeaver(["hooks", "install", "--root", book]);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(runDoctor({ bookRoot: book }).blocking.some((finding) => finding.id === "hooks-installed"), false);
+  } finally {
+    rmSync(book, { recursive: true, force: true });
+  }
+});
+
 function requireSeparator() {
   return process.platform === "win32" ? "\\" : "/";
 }

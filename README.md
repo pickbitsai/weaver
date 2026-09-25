@@ -95,6 +95,26 @@ malformed input or internal errors; `check` and `release` remain authoritative.
 The GitHub install works today. The equivalent registry package will be
 `@pickbitsai/weaver` after npm publication.
 
+## Approving changes
+
+The author decides what enters the book. AI scene edits stay pending until the
+author approves them, and only one chapter is approved or rejected at a time:
+
+```bash
+npx weaver changes --root ./my-book
+npx weaver approve --chapter 1 --note "Opening pass" --root ./my-book
+npx weaver reject --chapter 1 --root ./my-book
+npx weaver undo --root ./my-book
+npx weaver history --root ./my-book
+```
+
+`changes` shows the scenes, word changes, and style findings waiting for the
+author. `approve` saves an approval as a Git commit, while `reject` saves the
+rejected text under `.weaver/rejected/` before restoring the last approved
+text. `undo` creates a Git revert, so history is never rewritten. Rejected
+copies are kept on disk and ignored by Git; `history` shows approvals and
+undos. Nothing is ever silently discarded.
+
 ## Keep narrative state current
 
 After writing or revising a scene, update its corresponding
@@ -120,6 +140,11 @@ Re-derive them in order before accepting state again.
 | `status` | Summarize manuscript hash, words, scenes, and state freshness |
 | `check` | Run project, critical-path, repetition, and state gates |
 | `rules` | Run deterministic style rules (`--scene`, `--json` supported) |
+| `changes` | Show pending scene edits grouped by chapter (`--json` supported) |
+| `approve` | Save one chapter's pending edits as an approval |
+| `reject` | Save and restore one chapter's pending edits |
+| `undo` | Revert the most recent approval with a new Git commit |
+| `history` | Show approvals and undos (`--json` supported) |
 | `hooks install` | Install or merge Claude Code scene-edit hooks |
 | `state:status` | Show current and stale derived-state records |
 | `state:accept` | Stamp reviewed narrative state through a scene |

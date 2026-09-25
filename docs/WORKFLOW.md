@@ -32,6 +32,10 @@ chapter and scene counts, POV decisions, and scene word counts. Imported books
 begin with missing or stale narrative state by design; `check` reports that
 state but does not fail on it until the project's state workflow is bootstrapped.
 
+The repair path uses the same author approval boundary: imported or AI-edited
+scene changes appear in `weaver changes`, and the author approves or rejects
+one chapter at a time before continuing to state review and export.
+
 ## 1. Lock the architecture
 
 Before drafting, define the ending, scene-level beat map, reveal/reframe ledger,
@@ -87,7 +91,23 @@ Revise until continuity is clear, style drift is resolved or accepted, and the
 critic passes. Major structural changes remain human-gated.
 The reviewer prompts live under `prompts/reviewers/`.
 
-## 5. Update derived state
+## 5. Approve or reject the chapter
+
+The author controls when AI edits enter the book. Inspect pending scene edits
+with `weaver changes --root ./my-book`. Work on one chapter at a time:
+
+```bash
+weaver approve --chapter 1 --note "Reviewed opening" --root ./my-book
+```
+
+Approval creates a Git snapshot and refreshes each changed scene's derived word
+footer. If the author does not want the edits, use
+`weaver reject --chapter 1 --root ./my-book`; Weaver saves the rejected files
+under `.weaver/rejected/` and restores the last approved text. Rejected copies
+stay on disk and are ignored by Git. `weaver undo` creates a new revert commit,
+and `weaver history` lists approvals and undos. Nothing is silently lost.
+
+## 6. Update derived state
 
 Update only what changed in `narrative-state/<scene-id>.md` and the cumulative
 reader ledger. Then accept reviewed state:
@@ -99,7 +119,7 @@ weaver state:accept --root ./my-book --through 1-1
 If an early scene is revised later, re-derive every stale scene in order.
 `prompts/state-extractor.md` defines the generic delta format.
 
-## 6. Verify and release
+## 7. Verify and release
 
 ```bash
 weaver check --root ./my-book

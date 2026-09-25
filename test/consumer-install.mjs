@@ -71,6 +71,11 @@ try {
   assert.ok(existsSync(installedNotice), "NOTICE is missing from the packed package");
   assert.match(readFileSync(installedNotice, "utf8"), /PickBits Weaver/);
   weaver(["init", book, "--id", "consumer-book", "--title", "Consumer Book"]);
+  const bookGitignore = readFileSync(join(book, ".gitignore"), "utf8");
+  assert.match(bookGitignore, /node_modules\//);
+  assert.match(bookGitignore, /\.weaver\/tmp\//);
+  assert.match(bookGitignore, /\.weaver\/rejected\//);
+  assert.ok(existsSync(join(book, ".claude", "settings.json")));
 
   weaver(["init", repairBook, "--id", "consumer-repair", "--title", "Consumer Repair", "--empty"]);
   writeFileSync(finishedSource, "# Liese\n\nA finished scene with an em — dash.\n\n* * *\n\nA second scene.");
@@ -95,6 +100,18 @@ try {
   const status = JSON.parse(weaver(["status", "--root", book]));
   assert.equal(status.project_id, "consumer-book");
   assert.equal(status.scenes, 1);
+
+  const scenePath = join(book, "manuscript", "chapter-01", "scene-01", "scene.md");
+  const approvedBefore = readFileSync(scenePath, "utf8");
+  writeFileSync(scenePath, approvedBefore.replace("different state.", "approved then undone state."));
+  const pending = JSON.parse(weaver(["changes", "--root", book, "--json"]));
+  assert.equal(pending.chapters[0].chapter, 1);
+  weaver(["approve", "--chapter", "1", "--root", book]);
+  const history = JSON.parse(weaver(["history", "--root", book, "--json"]));
+  assert.equal(history[0].type, "approval");
+  weaver(["undo", "--root", book]);
+  assert.equal(readFileSync(scenePath, "utf8").includes("approved then undone state."), false);
+  assert.equal(readFileSync(scenePath, "utf8").includes("different state."), true);
 
   weaver(["state:accept", "--root", book]);
   const check = JSON.parse(weaver(["check", "--root", book]));
