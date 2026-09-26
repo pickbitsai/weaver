@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/pickbitsai/weaver/main/contracts/review.schema.json",
+  "title": "Weaver chapter review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "chapter", "lens", "verdict", "findings", "dropped_findings", "chapter_prose_sha256", "facts_sha256", "packet_id", "generator"],
+  "properties": {
+    "$schema": { "const": "https://pickbits.ai/schemas/weaver/review-1.json" },
+    "chapter": { "type": "integer", "minimum": 1 },
+    "lens": { "enum": ["continuity", "style", "critic"] },
+    "verdict": { "enum": ["CLEAR", "FLAGS", "CONSISTENT", "DRIFT", "PASS", "FAIL"] },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "scene_id", "paragraph", "quote", "issue", "repair"],
+        "properties": {
+          "severity": { "enum": ["definite", "ambiguity", "minor", "craft"] },
+          "scene_id": { "type": "string", "pattern": "^[0-9]+-[0-9]+$" },
+          "paragraph": { "type": "integer", "minimum": 1 },
+          "quote": { "type": "string", "minLength": 1 },
+          "issue": { "type": "string", "minLength": 1 },
+          "repair": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "dropped_findings": { "type": "integer", "minimum": 0 },
+    "chapter_prose_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "facts_sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+    "packet_id": { "type": "string", "pattern": "^[a-f0-9]{12}$" },
+    "generator": { "type": "string", "minLength": 1 }
+  }
+}

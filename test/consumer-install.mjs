@@ -5,7 +5,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSyn
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sandbox = mkdtempSync(join(tmpdir(), "weaver-consumer-"));
@@ -15,6 +15,7 @@ const repairBook = join(consumer, "repair-book");
 const finishedSource = join(consumer, "finished.md");
 const npmCli = process.env.npm_execpath;
 const env = { ...process.env, NPM_CONFIG_CACHE: join(sandbox, "npm-cache") };
+let studioChild;
 assert.ok(npmCli, "npm_execpath is required; run this check through npm");
 
 function run(command, args, cwd) {
@@ -80,6 +81,14 @@ try {
   weaver(["init", repairBook, "--id", "consumer-repair", "--title", "Consumer Repair", "--empty"]);
   writeFileSync(finishedSource, "# Wren\n\nA finished scene with an em — dash.\n\n* * *\n\nA second scene.");
   weaver(["import", finishedSource, "--root", repairBook]);
+  const fakeHost = join(consumer, "fake-host.mjs");
+  writeFileSync(fakeHost, readFileSync(join(root, "test", "fixtures", "fake-host.mjs"), "utf8"));
+  const repairProjectPath = join(repairBook, "project.json");
+  const repairProject = JSON.parse(readFileSync(repairProjectPath, "utf8"));
+  repairProject.host = { command: process.execPath, args: [fakeHost, "review-triage"], concurrency: 3, timeout_seconds: 10 };
+  writeFileSync(repairProjectPath, `${JSON.stringify(repairProject, null, 2)}\n`);
+  weaver(["review", "--chapter", "1", "--run", "--root", repairBook]);
+  assert.ok(existsSync(join(repairBook, "review", "chapter-01-continuity.json")));
   // An imported book has no accepted narrative state yet: check must say so, and release must
   // refuse until state is current. Export (the repair path) does not depend on state.
   const repairCheckResult = weaverResult(["check", "--root", repairBook]);
@@ -96,6 +105,24 @@ try {
   const doctor = JSON.parse(weaver(["doctor", "--json", "--root", book]));
   assert.equal(doctor.checks.find((check) => check.id === "install-integrity").status, "pass");
   assert.equal(doctor.ok, true);
+
+  studioChild = spawn(process.execPath, [join(consumer, "node_modules", "@pickbitsai", "weaver", "scripts", "weaver.mjs"), "studio", "--root", book, "--port", "0"], { cwd: consumer, env, stdio: ["ignore", "pipe", "pipe"] });
+  const studioUrl = await new Promise((ready, reject) => {
+    let output = "";
+    const timer = setTimeout(() => reject(new Error("installed studio did not start")), 15_000);
+    studioChild.stdout.on("data", (chunk) => {
+      output += chunk.toString();
+      const match = output.match(/http:\/\/127\.0\.0\.1:\d+\//u);
+      if (match) { clearTimeout(timer); ready(match[0]); }
+    });
+    studioChild.on("error", (error) => { clearTimeout(timer); reject(error); });
+    studioChild.on("exit", (code) => { if (!output.includes("http://127.0.0.1:")) { clearTimeout(timer); reject(new Error(`installed studio exited ${code}`)); } });
+  });
+  const studioHealth = await fetch(new URL("api/health", studioUrl));
+  assert.equal(studioHealth.status, 200);
+  assert.deepEqual(await studioHealth.json(), { service: "pickbits-weaver-studio", generator: "PickBits Weaver 0.3.0", book: "consumer-book" });
+  studioChild.kill();
+  studioChild = null;
 
   const status = JSON.parse(weaver(["status", "--root", book]));
   assert.equal(status.project_id, "consumer-book");
@@ -142,5 +169,6 @@ try {
 
   console.log("consumer smoke passed: packed, installed, initialized, checked, and released");
 } finally {
+  studioChild?.kill();
   rmSync(sandbox, { recursive: true, force: true });
 }

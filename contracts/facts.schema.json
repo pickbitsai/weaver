@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/pickbitsai/weaver/main/contracts/facts.schema.json",
+  "title": "Weaver scene facts",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "scene_id", "prose_sha256", "packet_id", "generator", "facts"],
+  "properties": {
+    "$schema": { "const": "https://pickbits.ai/schemas/weaver/facts-1.json" },
+    "scene_id": { "type": "string", "pattern": "^[0-9]+-[0-9]+$" },
+    "prose_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "packet_id": { "type": "string", "pattern": "^[a-f0-9]{12}$" },
+    "generator": { "type": "string", "minLength": 1 },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "subject", "value", "quote"],
+        "properties": {
+          "kind": { "enum": ["location", "knowledge", "possession", "relationship", "event", "time"] },
+          "subject": { "type": "string", "minLength": 1 },
+          "value": { "type": "string", "minLength": 1 },
+          "quote": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

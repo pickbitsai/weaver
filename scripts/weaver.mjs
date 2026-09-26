@@ -10,13 +10,17 @@ import { readProject } from "../engine/project.mjs";
 import { buildRelease, runQualityChecks } from "../engine/release.mjs";
 import { DEFAULT_CHAPTER_PATTERN, importBook } from "../engine/import.mjs";
 import { exportBook } from "../engine/export.mjs";
-import { acceptNarrativeState, buildGroundingPacket, narrativeStateStatus } from "../engine/state.mjs";
+import { acceptNarrativeState, bootstrapState, buildFactsLedger, buildGroundingPacket, buildStatePacket, narrativeStateStatus, readPacket, submitStatePacket } from "../engine/state.mjs";
 import { GENERATOR } from "../engine/identity.mjs";
 import { installHooks, runHook } from "../engine/hooks.mjs";
 import { runRules } from "../engine/rules.mjs";
 import { approveChapter, approvalHistory, describePendingChanges, pendingChanges, recordImportBaseline, rejectChapter, undoApproval } from "../engine/changes.mjs";
 import { seedCharacters } from "../engine/characters.mjs";
 import { buildVoiceProfiles, runVoiceCheck } from "../engine/voice.mjs";
+import { collectFindings } from "../engine/findings.mjs";
+import { runReview, submitReviewPacket } from "../engine/review.mjs";
+import { rulingStatuses, saveRuling } from "../engine/rulings.mjs";
+import { startStudio } from "../engine/studio.mjs";
 
 const argv = process.argv.slice(2);
 const command = argv.shift() || "help";
@@ -50,7 +54,7 @@ function pendingSummary(report) {
   if (!report.pending) return "No scene changes are waiting for approval.";
   return report.chapters.map((chapter) => {
     const findingLabel = `${chapter.blocking} blocking style finding${chapter.blocking === 1 ? "" : "s"}`;
-    return `Chapter ${chapter.chapter}: ${chapter.scenes_changed} scene${chapter.scenes_changed === 1 ? "" : "s"} changed, +${chapter.words_added} / −${chapter.words_removed} words, ${findingLabel}`;
+    return `Chapter ${chapter.chapter}: ${chapter.scenes_changed} scene${chapter.scenes_changed === 1 ? "" : "s"} changed, +${chapter.words_added} / −${chapter.words_removed} words, ${findingLabel}, ${chapter.queued_judgments || 0} queued judgment(s)`;
   }).join("\n");
 }
 
@@ -170,6 +174,11 @@ try {
         first_stale: state.first_stale
       }
     });
+  } else if (command === "studio") {
+    const suppliedPort = option("--port");
+    if (suppliedPort !== null && (!/^\d+$/u.test(suppliedPort) || Number(suppliedPort) > 65535)) throw new Error("usage: weaver studio [--root directory] [--port N]");
+    const server = await startStudio({ root, port: suppliedPort === null ? null : Number(suppliedPort) });
+    print(`Weaver Studio is ready at http://127.0.0.1:${server.address().port}/`);
   } else if (command === "check") {
     warnAboutDoctor(root);
     const { project } = projectContext();
@@ -184,7 +193,9 @@ try {
         narrative_state: checks.state,
         rules: { blocking: checks.rules.blocking, warnings: checks.rules.warnings },
         voices: { warnings: checks.voices.warnings, stale_profiles: checks.voices.stale_profiles }
-      };
+    };
+    report.allowed_blocking = checks.allowed_blocking;
+    if (checks.allowed_blocking.length) report.blocking_finding_audit = `${checks.allowed_blocking.length} blocking finding(s) allowed by author rulings: ${checks.allowed_blocking.join(", ")}`;
     print(report);
     if (!checks.ok) process.exitCode = 1;
   } else if (command === "rules") {
@@ -215,6 +226,8 @@ try {
   } else if (command === "changes") {
     const { project } = projectContext();
     const report = describePendingChanges(root, project);
+    const judgments = collectFindings(root, project);
+    for (const entry of report.chapters) entry.queued_judgments = judgments.chapters.find((item) => item.chapter === entry.chapter)?.counts.queued_judgments || 0;
     if (argv.includes("--json")) print(report);
     else print(pendingSummary(report));
   } else if (command === "approve") {
@@ -224,6 +237,7 @@ try {
       const chapterOption = option("--chapter");
       const result = approveChapter(root, project, chapterOption == null ? null : Number(chapterOption), option("--note", ""));
       print(`Approval ${result.id}: Chapter ${result.chapter} approved.`);
+      if (result.allowed_blocking.length) print(`${result.allowed_blocking.length} blocking finding(s) allowed by author rulings: ${result.allowed_blocking.join(", ")}`);
     }
   } else if (command === "reject") {
     if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
@@ -263,6 +277,88 @@ try {
     warnAboutDoctor(root);
     const { project } = projectContext();
     print(narrativeStateStatus(root, project));
+  } else if (command === "state" && positional() === "bootstrap") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      await bootstrapState(root, project, { through: option("--through"), run: argv.includes("--run") });
+    }
+  } else if (command === "packet" && positional() === "state") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const sceneId = option("--scene");
+      if (!sceneId) throw new Error("usage: weaver packet state --scene <scene-id> [--root directory]");
+      const packet = buildStatePacket(root, project, sceneId);
+      print(`Packet ${packet.id}\n\n${packet.prompt}`);
+    }
+  } else if (command === "submit") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const packetId = positional();
+      const answerPath = option("--file");
+      if (!packetId || !answerPath) throw new Error("usage: weaver submit <packet-id> --file <answer> [--root directory]");
+      const { project } = projectContext();
+      const packet = readPacket(root, packetId);
+      const result = packet.kind === "REVIEW"
+        ? await submitReviewPacket(root, project, packet, readFileSync(resolve(answerPath), "utf8"))
+        : await submitStatePacket(root, project, packetId, readFileSync(resolve(answerPath), "utf8"));
+      if (!result.ok) {
+        print(`Packet ${packetId}: answer invalid after repair: ${result.errors[0]}`);
+        process.exitCode = 1;
+      } else if (packet.kind === "REVIEW") print(`Chapter ${result.record.chapter} ${result.record.lens}: recorded (${result.record.findings.length} findings, ${result.record.dropped_findings} dropped)`);
+      else print(`Scene ${result.scene_id}: recorded (${result.facts} facts)`);
+    }
+  } else if (command === "review") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const chapter = Number(option("--chapter"));
+      if (!Number.isInteger(chapter) || chapter < 1) throw new Error("usage: weaver review --chapter N [--lenses continuity,style,critic] [--run]");
+      const lenses = option("--lenses")?.split(",").map((item) => item.trim()) || undefined;
+      await runReview(root, project, { chapter, lenses, run: argv.includes("--run") });
+    }
+  } else if (command === "findings") {
+    const { project } = projectContext();
+    const chapter = option("--chapter");
+    const result = collectFindings(root, project, { chapter: chapter === null ? null : Number(chapter), all: argv.includes("--all"), toFix: argv.includes("--to-fix") });
+    if (argv.includes("--json")) print(result);
+    else {
+      for (const entry of result.chapters) {
+        const counts = entry.counts;
+        print(`Chapter ${entry.chapter}: ${counts.definite_contradictions} definite contradiction(s), ${counts.style_breaks} style break(s), ${counts.critic_issues} critic issue(s), ${entry.note_count} notes (see --all)`);
+        for (const lens of entry.stale_reviews) print(`  ${lens} review out of date, run weaver review --chapter ${entry.chapter}`);
+        for (const item of entry.findings) print(`  ${item.id} ${item.source}, ${item.scene_id} paragraph ${item.paragraph}: ${item.quote}\n    ${item.issue}\n    Suggested repair: ${item.repair}${item.ruling ? `\n    ${item.ruling}` : ""}`);
+        if (argv.includes("--all")) for (const item of entry.notes) print(`  note ${item.id} ${item.source}, ${item.scene_id} paragraph ${item.paragraph}: ${item.issue}`);
+      }
+    }
+  } else if (command === "rule") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const id = positional();
+      const decision = option("--decision");
+      if (!id || !decision) throw new Error("usage: weaver rule <finding-id> --decision fix|allow|intended [--note text]");
+      const collected = collectFindings(root, project, { all: true });
+      const finding = [...collected.findings, ...collected.notes].find((item) => item.id === id);
+      if (!finding) throw new Error(`unknown finding id: ${id}`);
+      const entry = saveRuling(root, project, finding, decision, option("--note", ""));
+      print(`Ruling ${entry.decision} ${entry.finding_id} saved.`);
+    }
+  } else if (command === "rulings") {
+    const { project } = projectContext();
+    const active = collectFindings(root, project, { all: true });
+    const result = rulingStatuses(root, project, [...active.findings, ...active.notes]);
+    if (argv.includes("--json")) print(result);
+    else if (!result.length) print("No author rulings.");
+    else for (const item of result) print(`${item.finding_id} ${item.decision}: ${item.status}${item.note ? ` — ${item.note}` : ""}`);
+  } else if (command === "facts" && positional() === "build") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const ledger = buildFactsLedger(root, project);
+      print(`Facts ledger built: ${Object.keys(ledger.subjects).length} subject(s).`);
+    }
   } else if (command === "state:accept") {
     if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
     else {
@@ -361,12 +457,17 @@ try {
 Usage:
   weaver init <directory> [--id book-id] [--title "Book Title"] [--empty]
   weaver doctor [--root directory] [--json]
+  weaver studio [--root directory] [--port N]
   weaver status [--root directory]
   weaver check [--root directory]
   weaver rules [--root directory] [--scene scene-id] [--json]
   weaver characters seed [--root directory] [--json]
   weaver voices build [--root directory] [--json]
   weaver voices check [--scene scene-id | --pending] [--root directory] [--json]
+  weaver review --chapter N [--lenses continuity,style,critic] [--run] [--root directory]
+  weaver findings [--chapter N] [--all] [--to-fix] [--json] [--root directory]
+  weaver rule <finding-id> --decision fix|allow|intended [--note text] [--root directory]
+  weaver rulings [--json] [--root directory]
   weaver changes [--root directory] [--json]
   weaver approve [--chapter number] [--note "text"] [--root directory]
   weaver reject [--chapter number] [--root directory]
@@ -374,7 +475,11 @@ Usage:
   weaver history [--root directory] [--json]
   weaver hooks install [--root directory]
   weaver state:status [--root directory]
+  weaver state bootstrap [--through scene-id] [--run] [--root directory]
   weaver state:accept [--root directory] [--through scene-id]
+  weaver packet state --scene scene-id [--root directory]
+  weaver submit packet-id --file answer [--root directory]
+  weaver facts build [--root directory]
   weaver grounding <scene-id> [--root directory] [--output file]
   weaver release --id beta-01 [--root directory] [--force]
   weaver import <source> [--root directory] [--pov title|none] [--chapter-pattern regex] [--json]
@@ -385,12 +490,17 @@ Usage:
 Usage:
   weaver init <directory> [--id book-id] [--title "Book Title"] [--empty]
   weaver doctor [--root directory] [--json]
+  weaver studio [--root directory] [--port N]
   weaver status [--root directory]
   weaver check [--root directory]
   weaver rules [--root directory] [--scene scene-id] [--json]
   weaver characters seed [--root directory] [--json]
   weaver voices build [--root directory] [--json]
   weaver voices check [--scene scene-id | --pending] [--root directory] [--json]
+  weaver review --chapter N [--lenses continuity,style,critic] [--run] [--root directory]
+  weaver findings [--chapter N] [--all] [--to-fix] [--json] [--root directory]
+  weaver rule <finding-id> --decision fix|allow|intended [--note text] [--root directory]
+  weaver rulings [--json] [--root directory]
   weaver changes [--root directory] [--json]
   weaver approve [--chapter number] [--note "text"] [--root directory]
   weaver reject [--chapter number] [--root directory]
@@ -398,7 +508,11 @@ Usage:
   weaver history [--root directory] [--json]
   weaver hooks install [--root directory]
   weaver state:status [--root directory]
+  weaver state bootstrap [--through scene-id] [--run] [--root directory]
   weaver state:accept [--root directory] [--through scene-id]
+  weaver packet state --scene scene-id [--root directory]
+  weaver submit packet-id --file answer [--root directory]
+  weaver facts build [--root directory]
   weaver grounding <scene-id> [--root directory] [--output file]
   weaver release --id beta-01 [--root directory] [--force]
   weaver import <source> [--root directory] [--pov title|none] [--chapter-pattern regex] [--json]

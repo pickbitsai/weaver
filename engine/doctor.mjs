@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { compareIntegrity } from "./integrity.mjs";
 import { GENERATOR } from "./identity.mjs";
 import { WEAVER_HOOK_COMMANDS } from "./hooks.mjs";
+import { hostAvailable } from "./host.mjs";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -59,6 +60,13 @@ const FINDINGS = {
     title: "Command-running AI host",
     why: "PickBits Weaver runs with an AI that can run commands, such as Claude Code. Chat-only AIs (web chat windows) are not supported.",
     fix: "Use an AI that can run commands, such as Claude Code."
+  },
+  hostAvailable: {
+    id: "host-available",
+    problem: "The configured command-line AI host is not available",
+    title: "Command-line AI host is available",
+    why: "Bootstrap needs the configured command-line AI host to answer work packets.",
+    fix: "install the command-line AI host (Claude Code) or set \"host\" in project.json."
   },
   hooksInstalled: {
     id: "hooks-installed",
@@ -212,6 +220,15 @@ export function runDoctor({ bookRoot, packageRoot = PACKAGE_ROOT, nodeVersion = 
   const hostFinding = [finding(FINDINGS.host)];
   warnings.push(...hostFinding);
   checks.push(checkResult(FINDINGS.host.id, FINDINGS.host.title, "warning", hostFinding));
+
+  let project = {};
+  try { project = JSON.parse(readFileSync(join(root, "project.json"), "utf8")); } catch {
+    // The project check is reported elsewhere; a missing project cannot make this warning blocking.
+  }
+  const available = hostAvailable(project);
+  const availableFinding = available ? [] : [finding(FINDINGS.hostAvailable)];
+  if (!available) warnings.push(...availableFinding);
+  checks.push(checkResult(FINDINGS.hostAvailable.id, FINDINGS.hostAvailable.title, available ? "pass" : "warning", availableFinding));
 
   return { generator: GENERATOR, ok: blocking.length === 0, blocking, warnings, checks };
 }

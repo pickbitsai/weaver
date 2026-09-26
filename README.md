@@ -47,6 +47,23 @@ npx weaver status --root ./my-book
 npx weaver grounding 1-1 --root ./my-book
 ```
 
+## The studio
+
+Start the local author page with `weaver studio --root ./my-book`. It listens
+only on `127.0.0.1:4187`; open `http://127.0.0.1:4187/` on the same computer.
+Use `--port N` to choose another port, or set `"studio": { "port": N }` in
+`project.json`. The studio works offline and uses no web services for its pages.
+Review and bootstrap jobs use the book's configured command-line AI host.
+
+The home page shows approval progress and findings. Book is the reader, with
+chapter and scene status. Character pages show aliases, voice evidence, facts,
+and spoken scenes. Places and Threads follow the facts ledger and narrative
+state. Findings is the decision queue, Changes compares approved and new text,
+History shows decisions and offers undo, and Jobs runs review or story-so-far
+bootstrap and lets the author read and accept the resulting state. The doctor footer appears on every page. Every button performs the
+same engine action as its matching Weaver command and obeys the same doctor
+refusal. The author can read and decide entirely on the local page.
+
 ## Repair a finished book
 
 Use one Weaver project for each book in a series. Start an empty book, import
@@ -136,6 +153,33 @@ manuscript hash and Git commit; working-tree edits do not make them stale.
 Voice findings are warnings for the author to judge; Weaver never decides that
 a voice is right.
 
+## Reviews and triage
+
+Run the continuity, style, and critic lenses for one chapter with
+`weaver review --chapter 1 --run --root ./my-book`. The configured host runs the
+three lenses concurrently. Omit `--run` to write interactive packets, then use
+`weaver submit <packet-id> --file <answer>`. Reviews cite a scene, paragraph,
+and verbatim reader-text quote; invalid citations are dropped. A review becomes
+out of date when its chapter prose changes, or when the continuity facts context
+changes.
+
+`weaver findings --root ./my-book` gives the author one queue across rules,
+voice, and reviews. Definite review problems enter the queue. A failing critic
+adds at most its first two craft or definite findings. Other review findings
+remain notes, visible with `weaver findings --all`. At most six review findings
+are queued per chapter, with continuity before style before critic. The queue
+also reports out-of-date reviews. Every finding has a stable ID.
+
+## Rulings
+
+Decide once with `weaver rule <finding-id> --decision fix|allow|intended
+--root ./my-book`. `fix` keeps the item in `weaver findings --to-fix`; `allow`
+and `intended` suppress it while its paragraph stays unchanged. Editing the
+paragraph lapses the ruling and shows the finding again with a lapse note.
+`weaver rulings` shows active, lapsed, and resolved decisions. Each decision is
+its own Git commit containing only `continuity/rulings.json`. Allowed blocking
+style findings are listed by ID in `check` and `approve` output.
+
 ## Claude Code hooks
 
 Run `weaver hooks install --root ./my-book` to merge Weaver's PreToolUse and
@@ -181,6 +225,38 @@ npx weaver release --root ./my-book --id beta-01
 If an earlier scene changes, `state:status` marks it and all later scenes stale.
 Re-derive them in order before accepting state again.
 
+## Story-so-far setup
+
+Imported books have prose but no trusted scene-by-scene story-so-far records.
+Bootstrap derives those records and a facts ledger before release. Weaver only
+builds packets and checks answers; a configured command-line host does the AI
+work, and the author still accepts the resulting state:
+
+```bash
+npx weaver state bootstrap --run --root ./my-book
+npx weaver state:accept --through 3-2 --root ./my-book
+npx weaver facts build --root ./my-book
+```
+
+For an interactive Claude Code session, print one packet and submit its answer:
+
+```bash
+npx weaver packet state --scene 1-1 --root ./my-book
+npx weaver submit <packet-id> --file ./answer.md --root ./my-book
+```
+
+Answers contain a Markdown narrative-state record and a fenced JSON facts
+block. Every fact quote must be a verbatim 3–25 word excerpt from that scene;
+quotes from elsewhere are rejected, including after the single repair round.
+`continuity/facts.json` is deterministic derived state: it keeps facts in scene
+order and records the first scene that establishes each normalized value.
+
+The host defaults to Claude Code (`claude -p --output-format text`) and can be
+set in `project.json` with `host.command`, `host.args`, `host.concurrency`, and
+`host.timeout_seconds`. Weaver removes `ANTHROPIC_API_KEY` from the child
+environment, so host runs use the user's Claude subscription rather than
+silently billing an API key. A missing host is a doctor warning, not a block.
+
 ## Commands
 
 | Command | Purpose |
@@ -189,12 +265,17 @@ Re-derive them in order before accepting state again.
 | `import <source>` | Import a finished DOCX, Markdown, text file, or folder into an empty book |
 | `export --format md\|docx --out <file>` | Export the current manuscript without overwriting the source or an existing file |
 | `doctor` | Check the book folder, Git, host, and Weaver installation |
+| `studio` | Open the local author page (`--port N` supported) |
 | `status` | Summarize manuscript hash, words, scenes, and state freshness |
 | `check` | Run project, critical-path, repetition, and state gates |
 | `rules` | Run deterministic style rules (`--scene`, `--json` supported) |
 | `characters seed` | Add imported POV names to the character registry |
 | `voices build` | Build deterministic character voice profiles |
 | `voices check` | Show voice warnings (`--scene`, `--pending`, `--json` supported) |
+| `review --chapter N` | Run or prepare chapter review lenses (`--lenses`, `--run` supported) |
+| `findings` | Show the triaged queue (`--chapter`, `--all`, `--to-fix`, `--json` supported) |
+| `rule <finding-id>` | Save an author decision (`--decision`, `--note` supported) |
+| `rulings` | List active, lapsed, and resolved decisions (`--json` supported) |
 | `changes` | Show pending scene edits grouped by chapter (`--json` supported) |
 | `approve` | Save one chapter's pending edits as an approval |
 | `reject` | Save and restore one chapter's pending edits |
@@ -202,7 +283,11 @@ Re-derive them in order before accepting state again.
 | `history` | Show approvals and undos (`--json` supported) |
 | `hooks install` | Install or merge Claude Code scene-edit hooks |
 | `state:status` | Show current and stale derived-state records |
+| `state bootstrap` | Build story-so-far packets, optionally run them through the host |
 | `state:accept` | Stamp reviewed narrative state through a scene |
+| `packet state` | Print an interactive story-so-far packet |
+| `submit` | Validate and record a packet answer |
+| `facts build` | Rebuild the deterministic facts ledger |
 | `grounding <scene-id>` | Assemble the context packet for a writing pass |
 | `release --id <id>` | Build an immutable Markdown/HTML reader release |
 
