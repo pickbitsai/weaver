@@ -136,6 +136,33 @@ manuscript hash and Git commit; working-tree edits do not make them stale.
 Voice findings are warnings for the author to judge; Weaver never decides that
 a voice is right.
 
+## Reviews and triage
+
+Run the continuity, style, and critic lenses for one chapter with
+`weaver review --chapter 1 --run --root ./my-book`. The configured host runs the
+three lenses concurrently. Omit `--run` to write interactive packets, then use
+`weaver submit <packet-id> --file <answer>`. Reviews cite a scene, paragraph,
+and verbatim reader-text quote; invalid citations are dropped. A review becomes
+out of date when its chapter prose changes, or when the continuity facts context
+changes.
+
+`weaver findings --root ./my-book` gives the author one queue across rules,
+voice, and reviews. Definite review problems enter the queue. A failing critic
+adds at most its first two craft or definite findings. Other review findings
+remain notes, visible with `weaver findings --all`. At most six review findings
+are queued per chapter, with continuity before style before critic. The queue
+also reports out-of-date reviews. Every finding has a stable ID.
+
+## Rulings
+
+Decide once with `weaver rule <finding-id> --decision fix|allow|intended
+--root ./my-book`. `fix` keeps the item in `weaver findings --to-fix`; `allow`
+and `intended` suppress it while its paragraph stays unchanged. Editing the
+paragraph lapses the ruling and shows the finding again with a lapse note.
+`weaver rulings` shows active, lapsed, and resolved decisions. Each decision is
+its own Git commit containing only `continuity/rulings.json`. Allowed blocking
+style findings are listed by ID in `check` and `approve` output.
+
 ## Claude Code hooks
 
 Run `weaver hooks install --root ./my-book` to merge Weaver's PreToolUse and
@@ -227,6 +254,10 @@ silently billing an API key. A missing host is a doctor warning, not a block.
 | `characters seed` | Add imported POV names to the character registry |
 | `voices build` | Build deterministic character voice profiles |
 | `voices check` | Show voice warnings (`--scene`, `--pending`, `--json` supported) |
+| `review --chapter N` | Run or prepare chapter review lenses (`--lenses`, `--run` supported) |
+| `findings` | Show the triaged queue (`--chapter`, `--all`, `--to-fix`, `--json` supported) |
+| `rule <finding-id>` | Save an author decision (`--decision`, `--note` supported) |
+| `rulings` | List active, lapsed, and resolved decisions (`--json` supported) |
 | `changes` | Show pending scene edits grouped by chapter (`--json` supported) |
 | `approve` | Save one chapter's pending edits as an approval |
 | `reject` | Save and restore one chapter's pending edits |

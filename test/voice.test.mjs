@@ -141,6 +141,14 @@ test("profiles and checks are deterministic, evidentiary, stale-aware, and advis
     assert.equal(hookOutput.decision, undefined);
     assert.match(hookOutput.hookSpecificOutput.additionalContext, /Typical lines/);
 
+    const voiceId = result.findings.find((finding) => finding.speaker === "Brask").id;
+    const ruling = spawnSync(process.execPath, [CLI, "rule", voiceId, "--decision", "allow", "--root", root], { cwd: ROOT, encoding: "utf8" });
+    assert.equal(ruling.status, 0, `${ruling.stdout}\n${ruling.stderr}`);
+    assert.equal(runVoiceCheck(root, project).findings.some((finding) => finding.id === voiceId), false);
+    writeFileSync(path, readFileSync(path, "utf8").replace('Brask said, "Indeed, the eastern bastion', 'At noon, Brask said, "Indeed, the eastern bastion'));
+    assert.equal(runVoiceCheck(root, project).findings.find((finding) => finding.id === voiceId)?.ruling,
+      "an earlier ruling no longer applies because the passage changed");
+
     const approval = spawnSync(process.execPath, [CLI, "approve", "--chapter", "1", "--root", root], { cwd: ROOT, encoding: "utf8" });
     assert.equal(approval.status, 0, `${approval.stdout}\n${approval.stderr}`);
     const approvedProfile = JSON.parse(readFileSync(join(root, "world-bible", "voices", "brask.json"), "utf8"));

@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadScenes, countWords } from "./manuscript.mjs";
 import { readerText } from "./prose.mjs";
+import { applyRulings } from "./rulings.mjs";
 
 const RULES_PATH = join("quality", "rules.json");
 const RULE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
@@ -343,9 +344,10 @@ export function runRules(root, project, { sceneIds = null } = {}) {
       findings.push(...evaluateRule(rule, scene, paragraphs, unitParagraphs));
     }
   }
-  const blocking = findings.filter((finding) => finding.severity === "block").length;
-  const warnings = findings.filter((finding) => finding.severity === "warn").length;
-  return { ok: blocking === 0, findings, blocking, warnings, rules_checked: document.rules.length };
+  const filtered = applyRulings(root, project, findings, { kind: "rule", sourceOf: (finding) => finding.rule_id, quoteOf: (finding) => finding.excerpt, scenes: allScenes });
+  const blocking = filtered.findings.filter((finding) => finding.severity === "block").length;
+  const warnings = filtered.findings.filter((finding) => finding.severity === "warn").length;
+  return { ok: blocking === 0, findings: filtered.findings, blocking, warnings, allowed_blocking: filtered.allowed_blocking, rules_checked: document.rules.length };
 }
 
 export function rulesPath() {

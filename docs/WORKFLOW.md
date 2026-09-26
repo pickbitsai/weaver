@@ -10,6 +10,13 @@ weaver doctor --root ./my-book
 
 ## Repair path
 
+For each chapter, run `weaver review --chapter N --run`, then inspect
+`weaver findings --chapter N`. Use `--all` to see lower-priority review notes.
+Decide an item with `weaver rule <finding-id> --decision fix|allow|intended`.
+Work from `weaver findings --to-fix --chapter N` for requested repairs, rerun
+the reviews after prose changes, then approve the chapter. An allowed blocking
+style finding appears in the approval and check audit output by ID.
+
 For a finished book, create a separate Weaver project with `--empty`; this
 removes the starter scene and starter critical-path fixture while preserving
 the generic project configuration. Importing never merges with existing scene

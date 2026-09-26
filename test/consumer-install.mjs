@@ -80,6 +80,14 @@ try {
   weaver(["init", repairBook, "--id", "consumer-repair", "--title", "Consumer Repair", "--empty"]);
   writeFileSync(finishedSource, "# Wren\n\nA finished scene with an em — dash.\n\n* * *\n\nA second scene.");
   weaver(["import", finishedSource, "--root", repairBook]);
+  const fakeHost = join(consumer, "fake-host.mjs");
+  writeFileSync(fakeHost, readFileSync(join(root, "test", "fixtures", "fake-host.mjs"), "utf8"));
+  const repairProjectPath = join(repairBook, "project.json");
+  const repairProject = JSON.parse(readFileSync(repairProjectPath, "utf8"));
+  repairProject.host = { command: process.execPath, args: [fakeHost, "review-triage"], concurrency: 3, timeout_seconds: 10 };
+  writeFileSync(repairProjectPath, `${JSON.stringify(repairProject, null, 2)}\n`);
+  weaver(["review", "--chapter", "1", "--run", "--root", repairBook]);
+  assert.ok(existsSync(join(repairBook, "review", "chapter-01-continuity.json")));
   // An imported book has no accepted narrative state yet: check must say so, and release must
   // refuse until state is current. Export (the repair path) does not depend on state.
   const repairCheckResult = weaverResult(["check", "--root", repairBook]);
