@@ -10,7 +10,7 @@ import { readProject } from "../engine/project.mjs";
 import { buildRelease, runQualityChecks } from "../engine/release.mjs";
 import { DEFAULT_CHAPTER_PATTERN, importBook } from "../engine/import.mjs";
 import { exportBook } from "../engine/export.mjs";
-import { acceptNarrativeState, buildGroundingPacket, narrativeStateStatus } from "../engine/state.mjs";
+import { acceptNarrativeState, bootstrapState, buildFactsLedger, buildGroundingPacket, buildStatePacket, narrativeStateStatus, submitStatePacket } from "../engine/state.mjs";
 import { GENERATOR } from "../engine/identity.mjs";
 import { installHooks, runHook } from "../engine/hooks.mjs";
 import { runRules } from "../engine/rules.mjs";
@@ -263,6 +263,41 @@ try {
     warnAboutDoctor(root);
     const { project } = projectContext();
     print(narrativeStateStatus(root, project));
+  } else if (command === "state" && positional() === "bootstrap") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      await bootstrapState(root, project, { through: option("--through"), run: argv.includes("--run") });
+    }
+  } else if (command === "packet" && positional() === "state") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const sceneId = option("--scene");
+      if (!sceneId) throw new Error("usage: weaver packet state --scene <scene-id> [--root directory]");
+      const packet = buildStatePacket(root, project, sceneId);
+      print(`Packet ${packet.id}\n\n${packet.prompt}`);
+    }
+  } else if (command === "submit") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const packetId = positional();
+      const answerPath = option("--file");
+      if (!packetId || !answerPath) throw new Error("usage: weaver submit <packet-id> --file <answer> [--root directory]");
+      const { project } = projectContext();
+      const result = await submitStatePacket(root, project, packetId, readFileSync(resolve(answerPath), "utf8"));
+      if (!result.ok) {
+        print(`Packet ${packetId}: answer invalid after repair: ${result.errors[0]}`);
+        process.exitCode = 1;
+      } else print(`Scene ${result.scene_id}: recorded (${result.facts} facts)`);
+    }
+  } else if (command === "facts" && positional() === "build") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const ledger = buildFactsLedger(root, project);
+      print(`Facts ledger built: ${Object.keys(ledger.subjects).length} subject(s).`);
+    }
   } else if (command === "state:accept") {
     if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
     else {
@@ -374,7 +409,11 @@ Usage:
   weaver history [--root directory] [--json]
   weaver hooks install [--root directory]
   weaver state:status [--root directory]
+  weaver state bootstrap [--through scene-id] [--run] [--root directory]
   weaver state:accept [--root directory] [--through scene-id]
+  weaver packet state --scene scene-id [--root directory]
+  weaver submit packet-id --file answer [--root directory]
+  weaver facts build [--root directory]
   weaver grounding <scene-id> [--root directory] [--output file]
   weaver release --id beta-01 [--root directory] [--force]
   weaver import <source> [--root directory] [--pov title|none] [--chapter-pattern regex] [--json]
@@ -398,7 +437,11 @@ Usage:
   weaver history [--root directory] [--json]
   weaver hooks install [--root directory]
   weaver state:status [--root directory]
+  weaver state bootstrap [--through scene-id] [--run] [--root directory]
   weaver state:accept [--root directory] [--through scene-id]
+  weaver packet state --scene scene-id [--root directory]
+  weaver submit packet-id --file answer [--root directory]
+  weaver facts build [--root directory]
   weaver grounding <scene-id> [--root directory] [--output file]
   weaver release --id beta-01 [--root directory] [--force]
   weaver import <source> [--root directory] [--pov title|none] [--chapter-pattern regex] [--json]

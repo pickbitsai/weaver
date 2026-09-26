@@ -181,6 +181,38 @@ npx weaver release --root ./my-book --id beta-01
 If an earlier scene changes, `state:status` marks it and all later scenes stale.
 Re-derive them in order before accepting state again.
 
+## Story-so-far setup
+
+Imported books have prose but no trusted scene-by-scene story-so-far records.
+Bootstrap derives those records and a facts ledger before release. Weaver only
+builds packets and checks answers; a configured command-line host does the AI
+work, and the author still accepts the resulting state:
+
+```bash
+npx weaver state bootstrap --run --root ./my-book
+npx weaver state:accept --through 3-2 --root ./my-book
+npx weaver facts build --root ./my-book
+```
+
+For an interactive Claude Code session, print one packet and submit its answer:
+
+```bash
+npx weaver packet state --scene 1-1 --root ./my-book
+npx weaver submit <packet-id> --file ./answer.md --root ./my-book
+```
+
+Answers contain a Markdown narrative-state record and a fenced JSON facts
+block. Every fact quote must be a verbatim 3–25 word excerpt from that scene;
+quotes from elsewhere are rejected, including after the single repair round.
+`continuity/facts.json` is deterministic derived state: it keeps facts in scene
+order and records the first scene that establishes each normalized value.
+
+The host defaults to Claude Code (`claude -p --output-format text`) and can be
+set in `project.json` with `host.command`, `host.args`, `host.concurrency`, and
+`host.timeout_seconds`. Weaver removes `ANTHROPIC_API_KEY` from the child
+environment, so host runs use the user's Claude subscription rather than
+silently billing an API key. A missing host is a doctor warning, not a block.
+
 ## Commands
 
 | Command | Purpose |
@@ -202,7 +234,11 @@ Re-derive them in order before accepting state again.
 | `history` | Show approvals and undos (`--json` supported) |
 | `hooks install` | Install or merge Claude Code scene-edit hooks |
 | `state:status` | Show current and stale derived-state records |
+| `state bootstrap` | Build story-so-far packets, optionally run them through the host |
 | `state:accept` | Stamp reviewed narrative state through a scene |
+| `packet state` | Print an interactive story-so-far packet |
+| `submit` | Validate and record a packet answer |
+| `facts build` | Rebuild the deterministic facts ledger |
 | `grounding <scene-id>` | Assemble the context packet for a writing pass |
 | `release --id <id>` | Build an immutable Markdown/HTML reader release |
 

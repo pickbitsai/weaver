@@ -32,6 +32,22 @@ chapter and scene counts, POV decisions, and scene word counts. Imported books
 begin with missing or stale narrative state by design; `check` reports that
 state but does not fail on it until the project's state workflow is bootstrapped.
 
+Before release, bootstrap the story-so-far records and facts ledger. The host
+answers deterministic packets, then the author reviews and accepts the records:
+
+```bash
+weaver state bootstrap --run --root ./my-book
+weaver state:accept --through 3-2 --root ./my-book
+weaver facts build --root ./my-book
+```
+
+The interactive route is `weaver packet state --scene 1-1`, followed by
+`weaver submit <packet-id> --file answer.md`. A malformed or deterministic
+validation failure gets one host repair attempt. Scene facts must use registry
+IDs (or `world`) and every quote must be a verbatim excerpt from that scene;
+invalid answers are skipped and never written. Editing an earlier scene makes
+its state and downstream state stale again, so bootstrap in reading order.
+
 The repair path uses the same author approval boundary: imported or AI-edited
 scene changes appear in `weaver changes`, and the author approves or rejects
 one chapter at a time before continuing to state review and export.
