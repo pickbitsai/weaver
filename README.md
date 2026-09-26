@@ -47,6 +47,23 @@ npx weaver status --root ./my-book
 npx weaver grounding 1-1 --root ./my-book
 ```
 
+## The studio
+
+Start the local author page with `weaver studio --root ./my-book`. It listens
+only on `127.0.0.1:4187`; open `http://127.0.0.1:4187/` on the same computer.
+Use `--port N` to choose another port, or set `"studio": { "port": N }` in
+`project.json`. The studio works offline and uses no web services for its pages.
+Review and bootstrap jobs use the book's configured command-line AI host.
+
+The home page shows approval progress and findings. Book is the reader, with
+chapter and scene status. Character pages show aliases, voice evidence, facts,
+and spoken scenes. Places and Threads follow the facts ledger and narrative
+state. Findings is the decision queue, Changes compares approved and new text,
+History shows decisions and offers undo, and Jobs runs review or story-so-far
+bootstrap and lets the author read and accept the resulting state. The doctor footer appears on every page. Every button performs the
+same engine action as its matching Weaver command and obeys the same doctor
+refusal. The author can read and decide entirely on the local page.
+
 ## Repair a finished book
 
 Use one Weaver project for each book in a series. Start an empty book, import
@@ -248,6 +265,7 @@ silently billing an API key. A missing host is a doctor warning, not a block.
 | `import <source>` | Import a finished DOCX, Markdown, text file, or folder into an empty book |
 | `export --format md\|docx --out <file>` | Export the current manuscript without overwriting the source or an existing file |
 | `doctor` | Check the book folder, Git, host, and Weaver installation |
+| `studio` | Open the local author page (`--port N` supported) |
 | `status` | Summarize manuscript hash, words, scenes, and state freshness |
 | `check` | Run project, critical-path, repetition, and state gates |
 | `rules` | Run deterministic style rules (`--scene`, `--json` supported) |

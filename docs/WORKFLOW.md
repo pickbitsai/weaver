@@ -1,5 +1,22 @@
 # Writing and revision workflow
 
+## The author's daily loop in the studio
+
+Open the local page started by `weaver studio --root ./my-book`. On Home, check
+approved chapters, open findings, and the doctor footer. Read Book by chapter
+and scene; paragraph markers lead to the relevant finding. Character, Place,
+and Thread pages provide the current story context.
+
+On Jobs, run a chapter review or bootstrap story-so-far state. Read each new
+state record there and explicitly accept it before release. Return to
+Findings, read the cited passage and suggested repair, then choose **Fix this**,
+**It's intended**, or **Allow**. Recheck a changed passage because its earlier
+ruling may lapse. Open Changes to compare approved and new paragraphs and
+their style findings. Approve or reject one chapter there. History records the
+decisions and offers a confirmed undo of the last approval. The studio calls
+the same engine operations as the matching commands below, including their
+doctor refusal.
+
 ## 0. Check the setup
 
 Before working on a book, run:

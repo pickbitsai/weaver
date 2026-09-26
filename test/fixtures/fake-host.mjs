@@ -10,6 +10,7 @@ const counterPath = ".weaver/fake-host-count";
 const prompt = readFileSync(0, "utf8");
 const review = prompt.match(/^# REVIEW packet chapter (\d+) lens (continuity|style|critic)/mu);
 if (review) {
+  if (mode === "review-delay" || mode === "studio") await new Promise((ready) => setTimeout(ready, 600));
   const lens = review[2];
   const paragraphs = [...prompt.matchAll(/^\[([0-9]+-[0-9]+) p(\d+)\] (.+)$/gmu)];
   const first = paragraphs[0];
@@ -68,8 +69,8 @@ process.stdout.write([
   "",
   "## Newly established", "", "- The scene establishes one reader fact.", "",
   "## Character deltas", "", "- No character delta.", "",
-  "## Active threads", "", "- The event remains active.", "",
+  "## Active threads", "", mode === "studio" ? "- Added: The lantern journey" : "- The event remains active.", "",
   "## Timeline and location", "", "- The scene continues in sequence.", "",
   "## Closing image", "", "- The reader is left with a changed pressure.", "",
-  "```json", JSON.stringify({ facts: [{ kind: "event", subject: "world", value: "the scene establishes one reader fact", quote }] }), "```", ""
+  "```json", JSON.stringify({ facts: [mode === "studio" ? { kind: "location", subject: "brask", value: "Eastern Gate", quote } : { kind: "event", subject: "world", value: "the scene establishes one reader fact", quote }] }), "```", ""
 ].join("\n"));

@@ -45,5 +45,9 @@ export function validateProject(project) {
       if (project.host.timeout_seconds !== undefined && (!Number.isInteger(project.host.timeout_seconds) || project.host.timeout_seconds < 1)) errors.push("host.timeout_seconds must be a positive integer");
     }
   }
+  if (project?.studio !== undefined) {
+    if (!project.studio || typeof project.studio !== "object" || Array.isArray(project.studio)) errors.push("studio must be an object");
+    else if (project.studio.port !== undefined && (!Number.isInteger(project.studio.port) || project.studio.port < 1 || project.studio.port > 65535)) errors.push("studio.port must be an integer from 1 to 65535");
+  }
   return errors;
 }

@@ -40,6 +40,11 @@
         "timeout_seconds": { "type": "integer", "minimum": 1 }
       }
     },
+    "studio": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "port": { "type": "integer", "minimum": 1, "maximum": 65535 } }
+    },
     "chapters": {
       "type": "object",
       "additionalProperties": { "type": "string" }

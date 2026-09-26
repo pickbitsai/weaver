@@ -20,6 +20,7 @@ import { buildVoiceProfiles, runVoiceCheck } from "../engine/voice.mjs";
 import { collectFindings } from "../engine/findings.mjs";
 import { runReview, submitReviewPacket } from "../engine/review.mjs";
 import { rulingStatuses, saveRuling } from "../engine/rulings.mjs";
+import { startStudio } from "../engine/studio.mjs";
 
 const argv = process.argv.slice(2);
 const command = argv.shift() || "help";
@@ -173,6 +174,11 @@ try {
         first_stale: state.first_stale
       }
     });
+  } else if (command === "studio") {
+    const suppliedPort = option("--port");
+    if (suppliedPort !== null && (!/^\d+$/u.test(suppliedPort) || Number(suppliedPort) > 65535)) throw new Error("usage: weaver studio [--root directory] [--port N]");
+    const server = await startStudio({ root, port: suppliedPort === null ? null : Number(suppliedPort) });
+    print(`Weaver Studio is ready at http://127.0.0.1:${server.address().port}/`);
   } else if (command === "check") {
     warnAboutDoctor(root);
     const { project } = projectContext();
@@ -451,6 +457,7 @@ try {
 Usage:
   weaver init <directory> [--id book-id] [--title "Book Title"] [--empty]
   weaver doctor [--root directory] [--json]
+  weaver studio [--root directory] [--port N]
   weaver status [--root directory]
   weaver check [--root directory]
   weaver rules [--root directory] [--scene scene-id] [--json]
@@ -483,6 +490,7 @@ Usage:
 Usage:
   weaver init <directory> [--id book-id] [--title "Book Title"] [--empty]
   weaver doctor [--root directory] [--json]
+  weaver studio [--root directory] [--port N]
   weaver status [--root directory]
   weaver check [--root directory]
   weaver rules [--root directory] [--scene scene-id] [--json]

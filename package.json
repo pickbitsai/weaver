@@ -29,6 +29,7 @@
     "engine/",
     "prompts/",
     "scripts/",
+    "studio/",
     "templates/",
     "integrity.json",
     "README.md",
