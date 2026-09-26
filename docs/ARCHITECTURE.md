@@ -45,6 +45,14 @@ does not hide state in a vector store or silently mutate the manuscript.
 
 ## Quality and releases
 
+The check gate also applies deterministic style rules from `quality/rules.json`.
+Rules measure reader text after stored Markdown escapes are decoded and italic
+markers are removed. Dialogue scope uses text inside matching straight or curly
+quotes; an opening quote at the start of a following paragraph continues
+multi-paragraph dialogue until it closes. Sentence boundaries split at `.`,
+`!`, `?`, or `…` followed by whitespace or a closing quote. These are simple
+editorial heuristics, documented and deterministic.
+
 The check gate validates critical anchors, rejects unapproved high-similarity
 cross-scene sentences, and optionally requires all narrative state to be
 current. Releases are content-addressed and immutable by ID: a release ID cannot

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://pickbits.ai/schemas/weaver/rules-1.json",
+  "version": 1,
+  "rules": [
+    {
+      "id": "em-dashes-per-scene",
+      "type": "count-per-words",
+      "severity": "warn",
+      "message": "Use em dashes sparingly.",
+      "text": "—",
+      "max": 4,
+      "per_words": 1000,
+      "unit": "scene"
+    },
+    {
+      "id": "common-ai-style-phrases",
+      "type": "phrase-list",
+      "severity": "warn",
+      "message": "Replace this common AI-style phrase with specific prose.",
+      "phrases": [
+        "delve",
+        "tapestry",
+        "a testament to",
+        "in the realm of",
+        "it's worth noting",
+        "navigate the complexities",
+        "palpable tension",
+        "the air was thick with",
+        "couldn't help but",
+        "sent shivers down",
+        "a breath she didn't know she was holding",
+        "a breath he didn't know he was holding",
+        "a dance of",
+        "a symphony of"
+      ],
+      "case_sensitive": false
+    },
+    {
+      "id": "repeated-sentence-starts",
+      "type": "repeated-sentence-starts",
+      "severity": "warn",
+      "message": "Vary consecutive sentence openings.",
+      "max_run": 2
+    }
+  ]
+}

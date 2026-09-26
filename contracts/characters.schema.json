@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/pickbitsai/weaver/main/contracts/characters.schema.json",
+  "title": "Weaver character registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "version", "characters"],
+  "properties": {
+    "$schema": { "const": "https://pickbits.ai/schemas/weaver/characters-1.json" },
+    "version": { "const": 1 },
+    "characters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "aliases", "pov"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+          "name": { "type": "string", "minLength": 1 },
+          "aliases": { "type": "array", "items": { "type": "string" } },
+          "pov": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/pickbitsai/weaver/main/contracts/import.schema.json",
+  "title": "Weaver book import record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "generator", "version", "imported_at", "source", "front_matter", "not_imported", "pov_rule", "chapters", "totals"],
+  "properties": {
+    "$schema": { "const": "https://pickbits.ai/schemas/weaver/import-1.json" },
+    "generator": { "type": "string" },
+    "version": { "type": "string" },
+    "imported_at": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "sha256", "kind"],
+      "properties": {
+        "file": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "kind": { "enum": ["docx", "markdown", "text", "folder"] }
+      }
+    },
+    "front_matter": { "type": "string" },
+    "not_imported": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["comments", "footnotes", "endnotes"],
+      "properties": {
+        "comments": { "type": "integer", "minimum": 0 },
+        "footnotes": { "type": "integer", "minimum": 0 },
+        "endnotes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "pov_rule": { "enum": ["title", "none"] },
+    "chapter_pattern": { "type": "string" },
+    "chapters": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["number", "title", "pov", "scenes", "scene_count", "words"],
+        "properties": {
+          "number": { "type": "integer", "minimum": 1 },
+          "title": { "type": "string" },
+          "pov": { "type": ["string", "null"] },
+          "scenes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["number", "prose", "words", "sha256"],
+              "properties": {
+                "number": { "type": "integer", "minimum": 1 },
+                "prose": { "type": "string" },
+                "words": { "type": "integer", "minimum": 0 },
+                "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              }
+            }
+          },
+          "scene_count": { "type": "integer", "minimum": 1 },
+          "words": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chapters", "scenes", "words"],
+      "properties": {
+        "chapters": { "type": "integer", "minimum": 1 },
+        "scenes": { "type": "integer", "minimum": 1 },
+        "words": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

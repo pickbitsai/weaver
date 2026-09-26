@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sandbox = mkdtempSync(join(tmpdir(), "weaver-consumer-"));
 const consumer = join(sandbox, "consumer");
 const book = join(consumer, "book");
+const repairBook = join(consumer, "repair-book");
+const finishedSource = join(consumer, "finished.md");
 const npmCli = process.env.npm_execpath;
 const env = { ...process.env, NPM_CONFIG_CACHE: join(sandbox, "npm-cache") };
 assert.ok(npmCli, "npm_execpath is required; run this check through npm");
@@ -38,6 +40,15 @@ function weaver(args) {
   return runNpm(["exec", "--", "weaver", ...args], consumer);
 }
 
+function weaverResult(args) {
+  return spawnSync(process.execPath, [npmCli, "exec", "--", "weaver", ...args], {
+    cwd: consumer,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+}
+
 try {
   mkdirSync(consumer, { recursive: true });
   writeFileSync(
@@ -60,10 +71,47 @@ try {
   assert.ok(existsSync(installedNotice), "NOTICE is missing from the packed package");
   assert.match(readFileSync(installedNotice, "utf8"), /PickBits Weaver/);
   weaver(["init", book, "--id", "consumer-book", "--title", "Consumer Book"]);
+  const bookGitignore = readFileSync(join(book, ".gitignore"), "utf8");
+  assert.match(bookGitignore, /node_modules\//);
+  assert.match(bookGitignore, /\.weaver\/tmp\//);
+  assert.match(bookGitignore, /\.weaver\/rejected\//);
+  assert.ok(existsSync(join(book, ".claude", "settings.json")));
+
+  weaver(["init", repairBook, "--id", "consumer-repair", "--title", "Consumer Repair", "--empty"]);
+  writeFileSync(finishedSource, "# Wren\n\nA finished scene with an em — dash.\n\n* * *\n\nA second scene.");
+  weaver(["import", finishedSource, "--root", repairBook]);
+  // An imported book has no accepted narrative state yet: check must say so, and release must
+  // refuse until state is current. Export (the repair path) does not depend on state.
+  const repairCheckResult = weaverResult(["check", "--root", repairBook]);
+  assert.equal(repairCheckResult.status, 1, repairCheckResult.stderr);
+  const repairCheck = JSON.parse(repairCheckResult.stdout);
+  assert.deepEqual(repairCheck.issues, [`narrative state is stale from scene ${repairCheck.narrative_state.first_stale}`]);
+  const repairRelease = weaverResult(["release", "--root", repairBook, "--id", "too-early"]);
+  assert.notEqual(repairRelease.status, 0);
+  assert.equal(existsSync(join(repairBook, "releases", "too-early")), false);
+  const repairDocx = join(consumer, "consumer-repair.docx");
+  weaver(["export", "--format", "docx", "--out", repairDocx, "--root", repairBook]);
+  assert.equal(readFileSync(repairDocx).subarray(0, 2).toString(), "PK");
+
+  const doctor = JSON.parse(weaver(["doctor", "--json", "--root", book]));
+  assert.equal(doctor.checks.find((check) => check.id === "install-integrity").status, "pass");
+  assert.equal(doctor.ok, true);
 
   const status = JSON.parse(weaver(["status", "--root", book]));
   assert.equal(status.project_id, "consumer-book");
   assert.equal(status.scenes, 1);
+
+  const scenePath = join(book, "manuscript", "chapter-01", "scene-01", "scene.md");
+  const approvedBefore = readFileSync(scenePath, "utf8");
+  writeFileSync(scenePath, approvedBefore.replace("different state.", "approved then undone state."));
+  const pending = JSON.parse(weaver(["changes", "--root", book, "--json"]));
+  assert.equal(pending.chapters[0].chapter, 1);
+  weaver(["approve", "--chapter", "1", "--root", book]);
+  const history = JSON.parse(weaver(["history", "--root", book, "--json"]));
+  assert.equal(history[0].type, "approval");
+  weaver(["undo", "--root", book]);
+  assert.equal(readFileSync(scenePath, "utf8").includes("approved then undone state."), false);
+  assert.equal(readFileSync(scenePath, "utf8").includes("different state."), true);
 
   weaver(["state:accept", "--root", book]);
   const check = JSON.parse(weaver(["check", "--root", book]));
@@ -75,6 +123,22 @@ try {
   );
   assert.equal(release.release_id, "consumer-smoke");
   assert.equal(release.source.scene_count, 1);
+
+  appendFileSync(
+    join(consumer, "node_modules", "@pickbitsai", "weaver", "engine", "state.mjs"),
+    " "
+  );
+  const brokenDoctor = weaverResult(["doctor", "--json", "--root", book]);
+  assert.notEqual(brokenDoctor.status, 0);
+  assert.ok(brokenDoctor.stdout, brokenDoctor.stderr);
+  const brokenReport = JSON.parse(brokenDoctor.stdout);
+  const integrity = brokenReport.blocking.find((finding) => finding.id === "install-integrity");
+  assert.ok(integrity);
+  assert.ok(integrity.paths.includes("engine/state.mjs"));
+  const refused = weaverResult(["release", "--root", book, "--id", "consumer-after-break"]);
+  assert.notEqual(refused.status, 0);
+  assert.equal(JSON.parse(refused.stdout).error, "Weaver's own files have been changed");
+  assert.equal(existsSync(join(book, "releases", "consumer-after-break")), false);
 
   console.log("consumer smoke passed: packed, installed, initialized, checked, and released");
 } finally {
