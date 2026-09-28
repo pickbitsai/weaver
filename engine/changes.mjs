@@ -111,6 +111,7 @@ function chapterFindings(root, project, pending) {
   const result = runRules(root, project, { sceneIds: available });
   const voice = runVoiceCheck(root, project, { sceneIds: available });
   const byScene = new Map();
+  byScene.allowed_blocking = result.allowed_blocking;
   for (const finding of result.findings) {
     if (!byScene.has(finding.scene_id)) byScene.set(finding.scene_id, []);
     byScene.get(finding.scene_id).push(finding);
@@ -184,7 +185,7 @@ function gitStatusAll(root) {
   return parseStatus(result.stdout);
 }
 
-function ensureIdentity(root, project) {
+export function ensureIdentity(root, project) {
   const name = git(root, ["config", "--get", "user.name"], { stdio: ["ignore", "pipe", "ignore"] });
   const email = git(root, ["config", "--get", "user.email"], { stdio: ["ignore", "pipe", "ignore"] });
   if (name.status !== 0 || !name.stdout.trim()) {
@@ -228,7 +229,7 @@ export function approveChapter(root, project, chapter = null, note = "") {
   const sha = git(root, ["rev-parse", "--short", "HEAD"], { stdio: ["ignore", "pipe", "pipe"] });
   if (sha.status !== 0) throw new Error("approval was saved, but its id could not be read from Git");
   const voices = buildVoiceProfiles(root, project);
-  return { chapter: selectedChapter, id: sha.stdout.trim(), paths, message: subject, voice_profiles: voices.profiles.length };
+  return { chapter: selectedChapter, id: sha.stdout.trim(), paths, message: subject, voice_profiles: voices.profiles.length, allowed_blocking: selectedFindings.allowed_blocking || [] };
 }
 
 // An imported book is the author's existing work: it is the starting point, not a pending change.

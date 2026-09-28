@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/pickbitsai/weaver/main/contracts/facts-ledger.schema.json",
+  "title": "Weaver facts ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "generator", "manuscript_sha256", "subjects", "first_established"],
+  "properties": {
+    "$schema": { "const": "https://pickbits.ai/schemas/weaver/facts-ledger-1.json" },
+    "generator": { "type": "string", "minLength": 1 },
+    "manuscript_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "subjects": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scene_id", "kind", "value", "quote"],
+          "properties": {
+            "scene_id": { "type": "string", "pattern": "^[0-9]+-[0-9]+$" },
+            "kind": { "enum": ["location", "knowledge", "possession", "relationship", "event", "time"] },
+            "value": { "type": "string", "minLength": 1 },
+            "quote": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "first_established": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["normalized_value", "subject", "kind", "scene_id"],
+        "properties": {
+          "normalized_value": { "type": "string", "minLength": 1 },
+          "subject": { "type": "string", "minLength": 1 },
+          "kind": { "enum": ["location", "knowledge", "possession", "relationship", "event", "time"] },
+          "scene_id": { "type": "string", "pattern": "^[0-9]+-[0-9]+$" }
+        }
+      }
+    }
+  }
+}

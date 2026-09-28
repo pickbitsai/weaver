@@ -39,7 +39,7 @@ export function runQualityChecks(root, project) {
     issues.push(`narrative state is stale from scene ${state.first_stale}`);
   }
   if (rules.blocking) issues.push(`style rules: ${rules.blocking} blocking finding(s)`);
-  return { ok: issues.length === 0, issues, scenes, criticalPath, duplicates, unapprovedDuplicates, state, rules, voices };
+  return { ok: issues.length === 0, issues, scenes, criticalPath, duplicates, unapprovedDuplicates, state, rules, voices, allowed_blocking: rules.allowed_blocking };
 }
 
 function assembleHtml(project, scenes, releaseId) {

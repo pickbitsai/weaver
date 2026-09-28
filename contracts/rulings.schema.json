@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/pickbitsai/weaver/main/contracts/rulings.schema.json",
+  "title": "Weaver author rulings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "generator", "entries"],
+  "properties": {
+    "$schema": { "const": "https://pickbits.ai/schemas/weaver/rulings-1.json" },
+    "generator": { "type": "string", "minLength": 1 },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_id", "kind", "source", "scene_id", "paragraph", "passage_sha256", "decision", "note", "ruled_at", "generator"],
+        "properties": {
+          "finding_id": { "type": "string", "pattern": "^[a-f0-9]{10}$" },
+          "kind": { "enum": ["rule", "voice", "judgment"] },
+          "source": { "type": "string", "minLength": 1 },
+          "scene_id": { "type": "string", "pattern": "^[0-9]+-[0-9]+$" },
+          "paragraph": { "type": "integer", "minimum": 1 },
+          "passage_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "decision": { "enum": ["fix", "allow", "intended"] },
+          "note": { "type": "string" },
+          "ruled_at": { "type": "string", "format": "date-time" },
+          "generator": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

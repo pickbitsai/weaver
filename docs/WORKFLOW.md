@@ -1,5 +1,22 @@
 # Writing and revision workflow
 
+## The author's daily loop in the studio
+
+Open the local page started by `weaver studio --root ./my-book`. On Home, check
+approved chapters, open findings, and the doctor footer. Read Book by chapter
+and scene; paragraph markers lead to the relevant finding. Character, Place,
+and Thread pages provide the current story context.
+
+On Jobs, run a chapter review or bootstrap story-so-far state. Read each new
+state record there and explicitly accept it before release. Return to
+Findings, read the cited passage and suggested repair, then choose **Fix this**,
+**It's intended**, or **Allow**. Recheck a changed passage because its earlier
+ruling may lapse. Open Changes to compare approved and new paragraphs and
+their style findings. Approve or reject one chapter there. History records the
+decisions and offers a confirmed undo of the last approval. The studio calls
+the same engine operations as the matching commands below, including their
+doctor refusal.
+
 ## 0. Check the setup
 
 Before working on a book, run:
@@ -9,6 +26,13 @@ weaver doctor --root ./my-book
 ```
 
 ## Repair path
+
+For each chapter, run `weaver review --chapter N --run`, then inspect
+`weaver findings --chapter N`. Use `--all` to see lower-priority review notes.
+Decide an item with `weaver rule <finding-id> --decision fix|allow|intended`.
+Work from `weaver findings --to-fix --chapter N` for requested repairs, rerun
+the reviews after prose changes, then approve the chapter. An allowed blocking
+style finding appears in the approval and check audit output by ID.
 
 For a finished book, create a separate Weaver project with `--empty`; this
 removes the starter scene and starter critical-path fixture while preserving
@@ -31,6 +55,22 @@ The import record under `imports/` preserves the source hash, front matter,
 chapter and scene counts, POV decisions, and scene word counts. Imported books
 begin with missing or stale narrative state by design; `check` reports that
 state but does not fail on it until the project's state workflow is bootstrapped.
+
+Before release, bootstrap the story-so-far records and facts ledger. The host
+answers deterministic packets, then the author reviews and accepts the records:
+
+```bash
+weaver state bootstrap --run --root ./my-book
+weaver state:accept --through 3-2 --root ./my-book
+weaver facts build --root ./my-book
+```
+
+The interactive route is `weaver packet state --scene 1-1`, followed by
+`weaver submit <packet-id> --file answer.md`. A malformed or deterministic
+validation failure gets one host repair attempt. Scene facts must use registry
+IDs (or `world`) and every quote must be a verbatim excerpt from that scene;
+invalid answers are skipped and never written. Editing an earlier scene makes
+its state and downstream state stale again, so bootstrap in reading order.
 
 The repair path uses the same author approval boundary: imported or AI-edited
 scene changes appear in `weaver changes`, and the author approves or rejects

@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { countWords, extractProse, loadScenes, manuscriptHash, sha256 } from "./manuscript.mjs";
 import { readerText } from "./prose.mjs";
+import { applyRulings } from "./rulings.mjs";
 import { loadCharacters } from "./characters.mjs";
 
 const VOICES_ROOT = join("world-bible", "voices");
@@ -713,7 +714,8 @@ export function runVoiceCheck(root, project, { sceneIds = null, pendingScenes = 
     }
     findings.push(finding);
   }
-  return { findings, notes, stale_profiles: staleProfiles, warnings: findings.length, hash: approved.manuscript_sha256 };
+  const filtered = applyRulings(root, project, findings, { kind: "voice", sourceOf: (finding) => finding.speaker, quoteOf: (finding) => finding.line });
+  return { findings: filtered.findings, notes, stale_profiles: staleProfiles, warnings: filtered.findings.length, hash: approved.manuscript_sha256 };
 }
 
 export function attributeDialogue(scene, characters) {
