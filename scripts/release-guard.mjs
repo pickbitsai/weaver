@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// release-guard v1.0.0
+// release-guard v1.0.1
 // Vendored from pickbitsai/release-guard. Copy this file alone into scripts/.
 import fs from 'node:fs';
 import os from 'node:os';
