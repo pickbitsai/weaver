@@ -2,3 +2,5 @@
 *.mjs text eol=lf
 *.md text eol=lf
 *.json text eol=lf
+logs/** export-ignore
+logs export-ignore
