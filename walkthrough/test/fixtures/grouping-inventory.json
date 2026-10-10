@@ -1,0 +1,16 @@
+[
+  { "group": "Your book", "path": "manuscript/chapter-NN/scene-NN/scene.md: one file per scene" },
+  { "group": "Your book", "path": "quality/rules.json" },
+  { "group": "Your book", "path": "world-bible/characters.json" },
+  { "group": "Your book", "path": "narrative-state/NN-NN.md: one file per scene" },
+  { "group": "Your book", "path": "continuity/facts.json" },
+  { "group": "Your book", "path": "imports/example.json" },
+  { "group": "Your book", "path": ".claude/settings.json" },
+  { "group": "Your book", "path": "project.json" },
+  { "group": "The tool", "path": "@pickbitsai/weaver/scripts/weaver.mjs" },
+  { "group": "The tool", "path": "@pickbitsai/weaver/engine/prose.mjs" },
+  { "group": "The tool", "path": "@pickbitsai/weaver/engine/state.mjs" },
+  { "group": "The tool", "path": "@pickbitsai/weaver/studio/" },
+  { "group": "The tool", "path": "@pickbitsai/weaver/templates/" },
+  { "group": "Your book", "path": "extras/notes.md" }
+]
