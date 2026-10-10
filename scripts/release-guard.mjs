@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 // release-guard v1.1.0
 // Vendored from pickbitsai/release-guard. Copy this file alone into scripts/.
 import fs from 'node:fs';

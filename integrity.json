@@ -55,6 +55,7 @@
     "prompts/reviewers/style.md": "4479a4cb676627ca1ff4f7116f15e0cdc1f50fe2763db1388371d80570c9cdd4",
     "prompts/state-extractor.md": "b2d92d014892f2a1c201003b1cd16cf9d0adcc5e8611f7d350eab612b8947cc5",
     "scripts/integrity.mjs": "78c0bcdf7b5858de517f02eb09db1febf6d33eec787f09e7c24178f0cb263243",
+    "scripts/release-guard.mjs": "e44cdab3a0eda989f793ae1e2da8892de167451fa37dab1ef6c723ade6f68fdf",
     "scripts/weaver.mjs": "87000e2d30aa34d6844e1614e52ccd13a4252d3d2c0226d33b2a911a548b136f",
     "studio/studio.css": "5b43ae992811dcc1c9b48bed2e2d8138dfa86f59f9ac0a314d892f06d032628b",
     "studio/studio.js": "e06181583916170fc36818d218febd190e9f2b7708af2a7bbf5238183252399e",
