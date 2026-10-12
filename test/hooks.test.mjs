@@ -32,7 +32,7 @@ test("hooks pre and post are fail-open and enforce the edited scene", () => {
     const payload = JSON.stringify({
       cwd: root,
       tool_name: "Edit",
-      tool_input: { file_path: scenePath(root), old_string: "short", new_string: "a much longer replacement" }
+      tool_input: { file_path: scenePath(root), old_string: "pressure", new_string: "a much greater pressure" }
     });
     const pre = cli(["hook", "pre"], root, payload);
     assert.equal(pre.status, 0, pre.stderr);

@@ -10,6 +10,7 @@ import test from "node:test";
 import { attributeDialogue, buildVoiceProfiles, runVoiceCheck } from "../engine/voice.mjs";
 import { loadCharacters } from "../engine/characters.mjs";
 import { readProject } from "../engine/project.mjs";
+import { runHook } from "../engine/hooks.mjs";
 
 const ROOT = resolve(".");
 const CLI = join(ROOT, "scripts", "weaver.mjs");
@@ -113,7 +114,12 @@ test("profiles and checks are deterministic, evidentiary, stale-aware, and advis
     const path = scenePath(root, 1, 2);
     const raw = readFileSync(path, "utf8");
     const footer = raw.lastIndexOf("\n---");
-    writeFileSync(path, `${raw.slice(0, footer)}\nBrask said, "Indeed, the eastern bastion is an imposing and ceremonious structure whose antiquated stones shall perhaps outlast every ordinary ambition."\n\nBrask said, "I ain't done yet!"\n\n"Bloody hell!" said Lady Veyra.\n\nOswin said, "I wait."\n${raw.slice(footer)}`);
+    const proposed = `${raw.slice(0, footer)}\nBrask said, "Indeed, the eastern bastion is an imposing and ceremonious structure whose antiquated stones shall perhaps outlast every ordinary ambition."\n\nBrask said, "I ain't done yet!"\n\n"Bloody hell!" said Lady Veyra.\n\nOswin said, "I wait."\n${raw.slice(footer)}`;
+    const pre = runHook("pre", { cwd: root, tool_name: "Write", tool_input: { file_path: path, content: proposed } });
+    assert.equal(pre?.hookSpecificOutput?.hookEventName, "PreToolUse");
+    assert.equal(pre.hookSpecificOutput.permissionDecision, undefined, "voice findings remain advisory before an edit");
+    assert.match(pre.hookSpecificOutput.additionalContext, /# Editorial rules/u);
+    writeFileSync(path, proposed);
     const result = runVoiceCheck(root, project);
     assert.deepEqual(result.stale_profiles, []);
     assert.ok(result.findings.some((finding) => finding.speaker === "Brask" && finding.maybe_sounds_like?.character === "Lady Veyra"));

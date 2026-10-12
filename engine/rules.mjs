@@ -2,7 +2,7 @@
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadScenes, countWords } from "./manuscript.mjs";
+import { loadScenes, countWords, extractProse } from "./manuscript.mjs";
 import { readerText } from "./prose.mjs";
 import { applyRulings } from "./rulings.mjs";
 
@@ -238,9 +238,15 @@ function sentenceRecords(paragraph, scope) {
   return records.sort((a, b) => a.start - b.start);
 }
 
-function evaluateRule(rule, scene, paragraphs, unitParagraphs) {
+function evaluateRule(rule, scene, paragraphs, unitParagraphs, measurements) {
   const findings = [];
   const scope = rule.scope || "all";
+  const measured = (finding, value, exceeded) => {
+    // Keep below-limit counts too, so a pre-edit comparison can report the
+    // actual starting count. Ordinary rule findings keep their existing shape.
+    measurements?.push({ ...finding, value, exceeded });
+    if (exceeded) findings.push(finding);
+  };
   if (rule.type === "count-per-words") {
     const groups = rule.unit === "scene" ? [[scene, paragraphs]] : [[scene, unitParagraphs]];
     for (const [, groupParagraphs] of groups) {
@@ -248,9 +254,11 @@ function evaluateRule(rule, scene, paragraphs, unitParagraphs) {
       const words = parts.reduce((sum, part) => sum + countWords(part.segment.text), 0);
       const matches = parts.flatMap((part) => occurrences(part.segment.text, rule.text).map((match) => ({ ...match, paragraph: part.paragraph })));
       const count = matches.length;
-      if (words > 0 && count * rule.per_words > rule.max * words && count > 0) {
-        const match = matches[0];
-        findings.push(makeFinding(rule, scene, match.paragraph, match.index, match.length, { count, limit: rule.max }));
+      if (groupParagraphs.length) {
+        const match = matches[0] || { paragraph: groupParagraphs[0], index: 0, length: 0 };
+        measured(makeFinding(rule, scene, match.paragraph, match.index, match.length, { count, limit: rule.max }),
+          words > 0 ? count * rule.per_words / words : 0,
+          words > 0 && count * rule.per_words > rule.max * words && count > 0);
       }
     }
   } else if (rule.type === "phrase-list") {
@@ -274,22 +282,21 @@ function evaluateRule(rule, scene, paragraphs, unitParagraphs) {
     for (const paragraph of paragraphs) {
       const parts = scopedText(paragraph, scope);
       const matches = parts.flatMap((part) => occurrences(part.text, rule.text).map((match) => ({ ...match, index: match.index + part.start })));
-      if (matches.length > rule.max) {
-        const match = firstMatchInParagraph(paragraph, matches);
-        findings.push(makeFinding(rule, scene, paragraph, match.index, match.length, { count: matches.length, limit: rule.max }));
-      }
+      const match = firstMatchInParagraph(paragraph, matches);
+      measured(makeFinding(rule, scene, paragraph, match.index, match.length, { count: matches.length, limit: rule.max }),
+        matches.length, matches.length > rule.max);
     }
   } else if (rule.type === "sentence-start-share") {
     const records = rule.unit === "paragraph"
       ? paragraphs.flatMap((paragraph) => [{ paragraph, records: sentenceRecords(paragraph, scope) }])
       : [{ paragraph: paragraphs[0], records: paragraphs.flatMap((paragraph) => sentenceRecords(paragraph, scope)) }];
     for (const group of records) {
-      if (group.records.length < rule.min_sentences) continue;
+      const paragraph = group.paragraph || paragraphs[0];
+      if (!paragraph) continue;
       const wanted = group.records.filter((sentence) => sentenceStart(sentence.text).toLocaleLowerCase() === rule.word.toLocaleLowerCase()).length;
-      if (wanted / group.records.length > rule.max_share) {
-        const paragraph = group.paragraph || paragraphs[0];
-        findings.push(makeFinding(rule, scene, paragraph, group.records[0]?.start || 0, 0, { count: wanted, limit: rule.max_share }));
-      }
+      const share = group.records.length ? wanted / group.records.length : 0;
+      measured(makeFinding(rule, scene, paragraph, group.records[0]?.start || 0, 0, { count: wanted, limit: rule.max_share }),
+        share, group.records.length >= rule.min_sentences && share > rule.max_share);
     }
   } else if (rule.type === "repeated-sentence-starts") {
     for (const paragraph of paragraphs) {
@@ -300,8 +307,9 @@ function evaluateRule(rule, scene, paragraphs, unitParagraphs) {
         let end = runStart + 1;
         while (end < records.length && sentenceStart(records[end].text).toLocaleLowerCase() === word) end += 1;
         const run = end - runStart;
-        if (word && run > rule.max_run) {
-          findings.push(makeFinding(rule, scene, paragraph, records[runStart].start, 0, { count: run, limit: rule.max_run }));
+        if (word) {
+          measured(makeFinding(rule, scene, paragraph, records[runStart].start, 0, { count: run, limit: rule.max_run }),
+            run, run > rule.max_run);
         }
         runStart = end;
       }
@@ -321,13 +329,13 @@ function prepareScene(scene) {
   return paragraphs.filter((paragraph) => paragraph.text.trim());
 }
 
-export function runRules(root, project, { sceneIds = null } = {}) {
+function runRulesOnScenes(root, project, allScenes, { sceneIds = null, includeMeasurements = false } = {}) {
   const document = loadRules(root);
-  const allScenes = loadScenes(root, project);
   const wanted = sceneIds ? new Set(sceneIds.map(String)) : null;
   const scenes = wanted ? allScenes.filter((scene) => wanted.has(scene.id)) : allScenes;
   const prepared = new Map(scenes.map((scene) => [scene.id, prepareScene(scene)]));
   const findings = [];
+  const measurements = includeMeasurements ? [] : null;
   const chapterRulesEvaluated = new Set();
   for (const scene of scenes) {
     const paragraphs = prepared.get(scene.id);
@@ -341,13 +349,30 @@ export function runRules(root, project, { sceneIds = null } = {}) {
       if (rule.type === "count-per-words" && rule.unit === "chapter") {
         unitParagraphs = scenes.filter((candidate) => candidate.chapter === scene.chapter).flatMap((candidate) => prepared.get(candidate.id));
       }
-      findings.push(...evaluateRule(rule, scene, paragraphs, unitParagraphs));
+      findings.push(...evaluateRule(rule, scene, paragraphs, unitParagraphs, measurements));
     }
   }
-  const filtered = applyRulings(root, project, findings, { kind: "rule", sourceOf: (finding) => finding.rule_id, quoteOf: (finding) => finding.excerpt, scenes: allScenes });
+  const rulingOptions = { kind: "rule", sourceOf: (finding) => finding.rule_id, quoteOf: (finding) => finding.excerpt, scenes: allScenes };
+  const filtered = applyRulings(root, project, findings, rulingOptions);
   const blocking = filtered.findings.filter((finding) => finding.severity === "block").length;
   const warnings = filtered.findings.filter((finding) => finding.severity === "warn").length;
-  return { ok: blocking === 0, findings: filtered.findings, blocking, warnings, allowed_blocking: filtered.allowed_blocking, rules_checked: document.rules.length };
+  return {
+    ok: blocking === 0, findings: filtered.findings, blocking, warnings,
+    allowed_blocking: filtered.allowed_blocking, rules_checked: document.rules.length,
+    ...(includeMeasurements ? { measurements: applyRulings(root, project, measurements, rulingOptions).findings } : {})
+  };
+}
+
+export function runRules(root, project, options = {}) {
+  return runRulesOnScenes(root, project, loadScenes(root, project), options);
+}
+
+export function runRulesForScene(root, project, sceneId, text) {
+  const [chapter, scene] = sceneId.split("-").map(Number);
+  const prose = extractProse(text, `scene ${sceneId}`);
+  // Like runRules({ sceneIds: [sceneId] }), chapter rules see only this scene.
+  // Passing it to applyRulings also hashes the proposed passage, not disk text.
+  return runRulesOnScenes(root, project, [{ id: sceneId, chapter, scene, prose }], { includeMeasurements: true });
 }
 
 export function rulesPath() {
