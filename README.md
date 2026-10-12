@@ -193,13 +193,14 @@ a voice is right.
 
 ## Reviews and triage
 
-Run the continuity, style, and critic lenses for one chapter with
+Run the continuity, style, critic, and configured book lenses for one chapter with
 `weaver review --chapter 1 --run --root ./my-book`. The configured host runs the
-three lenses concurrently. Omit `--run` to write interactive packets, then use
+review lenses with the configured concurrency. Omit `--run` to write interactive
+packets, then use
 `weaver submit <packet-id> --file <answer>`. Reviews cite a scene, paragraph,
 and verbatim reader-text quote; invalid citations are dropped. A review becomes
-out of date when its chapter prose changes, or when the continuity facts context
-changes.
+out of date when its chapter prose, reviewer instructions, registry, or included
+context changes.
 
 `weaver findings --root ./my-book` gives the author one queue across rules,
 voice, and reviews. Definite review problems enter the queue. A failing critic
@@ -294,6 +295,71 @@ set in `project.json` with `host.command`, `host.args`, `host.concurrency`, and
 `host.timeout_seconds`. Weaver removes `ANTHROPIC_API_KEY` from the child
 environment, so host runs use the user's Claude subscription rather than
 silently billing an API key. A missing host is a doctor warning, not a block.
+
+## Your own checks
+
+Add a reviewer at `quality/reviewers/<id>.md`, for example:
+
+```markdown
+---
+id: character-audit
+title: Character audit
+verdicts: [CLEAR, FLAGS]
+context: [world-bible, outline, style-guide, facts, previous-state]
+queue: definite
+---
+Check every speaking character against the registry and world bible.
+Report every supported contradiction, with a chapter quote and a small repair.
+```
+
+Front matter uses one `key: value` or `key: [a, b]` per line, with plain,
+unquoted values and `#` comments, between `---` lines. No nested YAML or
+multiline values are supported. `id`, `title`, `verdicts`, and `queue` are
+required; ids are kebab-case, match the filename, and cannot replace a built-in.
+The two distinct verdict words use letters, digits, underscores or hyphens and
+start with a letter; the first means nothing to report. `context` is any subset
+of the five keys shown, defaults to `[world-bible]`, and can be `[]`.
+The registry and chapter reader text are always included. `world-bible` reads
+top-level Markdown notes, excluding voice profiles and unchanged starters;
+`outline` reads Markdown recursively, excluding unchanged starters;
+`style-guide` reads all top-level Markdown. Continuity and critic also receive
+authored outline notes. With no authored outline, their packets keep the old
+layout. Invalid reviewers are skipped with named warnings in `check` and `doctor`.
+
+`queue: definite` queues only definite findings. `top-2` or `top-3` queues up to
+that many definite and craft findings when the verdict is the second word,
+prioritizing definite findings. Built-ins come first, then book reviewers in
+filename order; the whole chapter still has at most six queued judgments.
+`review --chapter N` and Studio's Run review include every valid reviewer;
+`--lenses id,id` selects specific ones. Editing reviewer instructions or their
+requested context makes existing records stale. The optional example at
+[`templates/examples/reviewers/character-audit.md`](templates/examples/reviewers/character-audit.md)
+is shipped with Weaver but is not installed by `init`.
+
+Every rule in `quality/rules.json` can also use these character-registry id lists:
+
+| Field | Applies to |
+| --- | --- |
+| `speakers: ["grell"]` | Only dialogue attributed to Grell |
+| `except_speakers: ["grell"]` | Dialogue except lines attributed to Grell |
+| `pov: ["tamsin"]` | Only scenes recorded as Tamsin's POV |
+| `except_pov: ["tamsin"]` | Scenes outside Tamsin's POV |
+
+Use ids from your own `world-bible/characters.json`; unknown ids are errors.
+The four fields can be combined. Speaker filters restrict the rule to dialogue
+and imply `scope: "dialogue"` when scope is omitted; `scope: "narration"` is an
+error. **Only confident attribution earns an exemption:** unattributed dialogue
+is skipped by `speakers`, but included by `except_speakers`. Likewise, scenes
+without a recorded POV are skipped by `pov` and included by `except_pov`.
+POV comes from scene metadata, including headings recorded during import;
+registry ids, names and unambiguous aliases resolve to the same character.
+Counting rules use only the selected text and its words or sentences, so exempt
+text cannot trigger or dilute a finding. Findings explain their scope;
+`rules --json` and Studio's Rules page show each configured scope.
+
+Both kinds of checks live under `quality/`, part of the sealed book settings.
+Changing them after hand-over is reported by `weaver doctor` under the existing
+settings-seal checks.
 
 ## Commands
 

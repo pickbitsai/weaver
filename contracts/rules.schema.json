@@ -22,8 +22,18 @@
         "type": { "enum": ["count-per-words", "phrase-list", "sentence-start-share", "repeated-sentence-starts", "max-per-paragraph", "regex"] },
         "severity": { "enum": ["block", "warn"] },
         "message": { "type": "string", "minLength": 1 },
-        "scope": { "enum": ["all", "narration", "dialogue"] }
-      }
+        "scope": { "enum": ["all", "narration", "dialogue"] },
+        "speakers": { "$ref": "#/$defs/characterIds" },
+        "except_speakers": { "$ref": "#/$defs/characterIds" },
+        "pov": { "$ref": "#/$defs/characterIds" },
+        "except_pov": { "$ref": "#/$defs/characterIds" }
+      },
+      "allOf": [{ "if": { "anyOf": [{ "required": ["speakers"] }, { "required": ["except_speakers"] }] }, "then": { "properties": { "scope": { "enum": ["all", "dialogue"] } } } }]
+    },
+    "characterIds": {
+      "type": "array",
+      "description": "Ids must exist in world-bible/characters.json.",
+      "items": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" }
     },
     "rule": {
       "oneOf": [

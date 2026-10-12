@@ -8,7 +8,7 @@ if (mode === "early-exit") process.exit(0);
 
 const counterPath = ".weaver/fake-host-count";
 const prompt = readFileSync(0, "utf8");
-const review = prompt.match(/^# REVIEW packet chapter (\d+) lens (continuity|style|critic)/mu);
+const review = prompt.match(/^# REVIEW packet chapter (\d+) lens ([a-z0-9]+(?:-[a-z0-9]+)*)/mu);
 if (review) {
   if (mode === "review-delay" || mode === "studio") await new Promise((ready) => setTimeout(ready, 600));
   const lens = review[2];
@@ -25,10 +25,10 @@ if (review) {
     process.stdout.write("```json\nnot json\n```\n");
     process.exit(0);
   }
-  const verdict = { continuity: "FLAGS", style: "DRIFT", critic: "FAIL" }[lens];
+  const verdict = prompt.match(/^Start with [A-Z0-9-]+: [A-Za-z0-9_-]+ or ([A-Za-z0-9_-]+)\./mu)?.[1];
   const findings = mode === "review-triage"
     ? lens === "continuity" ? [finding("definite"), ...Array.from({ length: 8 }, () => finding("minor"))]
-      : lens === "critic" ? Array.from({ length: 5 }, () => finding("craft")) : []
+      : lens === "critic" ? Array.from({ length: 5 }, () => finding("craft")) : lens === "style" ? [] : [finding("definite"), finding("craft"), finding("craft"), finding("minor")]
     : mode === "review-cap" ? Array.from({ length: 10 }, () => finding("definite"))
       : [finding("definite")];
   if (mode === "review-invalid") findings.push({ ...finding("definite"), quote: "These invented words are absent" });

@@ -1,0 +1,47 @@
+{
+  "continuity": {
+    "id": "38a6d5d44dd3",
+    "kind": "REVIEW",
+    "target": "1:continuity",
+    "prompt": "# REVIEW packet chapter 1 lens continuity\n\n<!-- PickBits Weaver · Apache-2.0 · https://github.com/pickbitsai/weaver -->\n# Continuity reviewer\n\nRead the scene, its grounding packet, and the canonical project references.\n\nCheck:\n\n- character knowledge and motivation boundaries;\n- timeline, duration, age, travel, weather, and location;\n- object ownership and physical continuity;\n- technology, magic, or world-rule limits;\n- active threads, promises, planted facts, and prior consequences;\n- accidental re-introduction of facts the reader already knows.\n\nReturn `CONTINUITY: CLEAR` or `CONTINUITY: FLAGS`, followed by a short,\nlocation-specific list. Distinguish definite contradiction from ambiguity.\nPropose the smallest repair that preserves the scene's intent.\n\n## Character registry\n[]\n\n## World bible\n_No project world-bible notes._\n\n## Earlier facts\n_No facts ledger._\n\n## Previous chapter narrative state\n_No previous chapter state records._\n\n## Chapter reader text\n[1-1 p1] The first line creates a pressure the protagonist cannot ignore.\n\n[1-1 p2] The closing image leaves the story in a different state.\n\n## Answer contract\nStart with CONTINUITY: CLEAR or FLAGS. Then return a fenced ```json block: {\"verdict\":\"<lens verdict>\",\"findings\":[{\"severity\":\"definite|ambiguity|minor|craft\",\"scene_id\":\"<id>\",\"paragraph\":1,\"quote\":\"<verbatim 3-25 words from that paragraph>\",\"issue\":\"<one sentence>\",\"repair\":\"<smallest repair, one sentence>\"}]}. Quote only this chapter's reader text.",
+    "inputs": {
+      "chapter_prose": "2924613b028d4a1a61d4d1091fa3c556e6c88b569d35f601b3afba6c6b85e6bf",
+      "facts": "",
+      "previous_state": "9d53e6fb55a097edcf78e1af8df2ddd7dc0ece3191c9627eceb57457934a47ab",
+      "registry": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "world_bible": "7a5aa59a9daaa2ea5d64ac653d330e551ec2a19400c9a2ba012d99821af85007",
+      "lens_prompt": "6eaede2ca8ee7e7551fde7c3ffe2cdd32ce9d373087ac4454d9a913247096d24"
+    },
+    "expects": "review-1"
+  },
+  "style": {
+    "id": "e972d2c8813c",
+    "kind": "REVIEW",
+    "target": "1:style",
+    "prompt": "# REVIEW packet chapter 1 lens style\n\n<!-- PickBits Weaver · Apache-2.0 · https://github.com/pickbitsai/weaver -->\n# Style reviewer\n\nRead the scene and the project's voice notes and exemplars.\n\nCheck:\n\n- narrative distance, tense, and point of view;\n- sentence/paragraph rhythm;\n- dialogue distinction and subtext;\n- image and metaphor families;\n- banned habits, filler, cliché, and over-explanation;\n- whether emotional emphasis is earned rather than announced.\n\nReturn `STYLE: CONSISTENT` or `STYLE: DRIFT`, followed by only material,\nlocation-specific findings. Preserve the author's voice; do not normalize the\nprose into generic workshop style.\n\n## Character registry\n[]\n\n## World bible\n_No project world-bible notes._\n\n## Chapter reader text\n[1-1 p1] The first line creates a pressure the protagonist cannot ignore.\n\n[1-1 p2] The closing image leaves the story in a different state.\n\n## Answer contract\nStart with STYLE: CONSISTENT or DRIFT. Then return a fenced ```json block: {\"verdict\":\"<lens verdict>\",\"findings\":[{\"severity\":\"definite|ambiguity|minor|craft\",\"scene_id\":\"<id>\",\"paragraph\":1,\"quote\":\"<verbatim 3-25 words from that paragraph>\",\"issue\":\"<one sentence>\",\"repair\":\"<smallest repair, one sentence>\"}]}. Quote only this chapter's reader text.",
+    "inputs": {
+      "chapter_prose": "2924613b028d4a1a61d4d1091fa3c556e6c88b569d35f601b3afba6c6b85e6bf",
+      "facts": "",
+      "previous_state": "",
+      "registry": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "world_bible": "7a5aa59a9daaa2ea5d64ac653d330e551ec2a19400c9a2ba012d99821af85007",
+      "lens_prompt": "1b0cb163c319efa7161ab2f1239cba128167a7d7b87eb7d1e0c766569770bce9"
+    },
+    "expects": "review-1"
+  },
+  "critic": {
+    "id": "f1976a937109",
+    "kind": "REVIEW",
+    "target": "1:critic",
+    "prompt": "# REVIEW packet chapter 1 lens critic\n\n<!-- PickBits Weaver · Apache-2.0 · https://github.com/pickbitsai/weaver -->\n# Critic reviewer\n\nJudge the scene as a demanding first-time reader.\n\nCheck:\n\n- whether the scene has one necessary structural function;\n- causal movement rather than “and then” sequencing;\n- meaningful character choice or resistance;\n- pacing relative to story position;\n- clarity without redundant explanation;\n- emotional movement and ending resonance;\n- whether the next scene has genuine pressure.\n\nReturn `CRITIC: PASS` or `CRITIC: FAIL`. For a failure, name the few issues that\nmost affect the reader and specify a revision target without rewriting the\nscene wholesale.\n\n## Character registry\n[]\n\n## World bible\n_No project world-bible notes._\n\n## Chapter reader text\n[1-1 p1] The first line creates a pressure the protagonist cannot ignore.\n\n[1-1 p2] The closing image leaves the story in a different state.\n\n## Answer contract\nStart with CRITIC: PASS or FAIL. Then return a fenced ```json block: {\"verdict\":\"<lens verdict>\",\"findings\":[{\"severity\":\"definite|ambiguity|minor|craft\",\"scene_id\":\"<id>\",\"paragraph\":1,\"quote\":\"<verbatim 3-25 words from that paragraph>\",\"issue\":\"<one sentence>\",\"repair\":\"<smallest repair, one sentence>\"}]}. Quote only this chapter's reader text.",
+    "inputs": {
+      "chapter_prose": "2924613b028d4a1a61d4d1091fa3c556e6c88b569d35f601b3afba6c6b85e6bf",
+      "facts": "",
+      "previous_state": "",
+      "registry": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "world_bible": "7a5aa59a9daaa2ea5d64ac653d330e551ec2a19400c9a2ba012d99821af85007",
+      "lens_prompt": "557857f60c44564f758bf5636136e581e34d6110e373d61aa5b05225a4d2047a"
+    },
+    "expects": "review-1"
+  }
+}

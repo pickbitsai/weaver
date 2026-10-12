@@ -19,6 +19,11 @@ export function countWords(text) {
   return text.match(/[\p{L}\p{N}]+(?:['\u2019][\p{L}\p{N}]+)*/gu)?.length || 0;
 }
 
+export function scenePov(text) {
+  const header = text.split(/^---\s*$/mu)[0];
+  return header.match(/^\*\*POV:\*\*[\t ]*([^\r\n]*)/mu)?.[1].trim() || null;
+}
+
 export function loadScenes(root, project) {
   const manuscriptRoot = join(root, project.source_root);
   if (!existsSync(manuscriptRoot)) throw new Error(`missing source root: ${project.source_root}`);
@@ -44,6 +49,7 @@ export function loadScenes(root, project) {
         path,
         relativePath: relative(root, path).replaceAll("\\", "/"),
         prose,
+        pov: scenePov(raw),
         words: countWords(prose),
         hash: sha256(prose)
       });

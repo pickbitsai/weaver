@@ -8,8 +8,8 @@
   "properties": {
     "$schema": { "const": "https://pickbits.ai/schemas/weaver/review-1.json" },
     "chapter": { "type": "integer", "minimum": 1 },
-    "lens": { "enum": ["continuity", "style", "critic"] },
-    "verdict": { "enum": ["CLEAR", "FLAGS", "CONSISTENT", "DRIFT", "PASS", "FAIL"] },
+    "lens": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "description": "A built-in or valid book reviewer id." },
+    "verdict": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$", "description": "One of this reviewer's two configured verdict words." },
     "findings": {
       "type": "array",
       "items": {

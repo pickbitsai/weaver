@@ -9,6 +9,7 @@ import { compareIntegrity } from "./integrity.mjs";
 import { GENERATOR } from "./identity.mjs";
 import { WEAVER_HOOK_COMMANDS } from "./hooks.mjs";
 import { hostAvailable } from "./host.mjs";
+import { reviewerWarnings } from "./reviewers.mjs";
 import { compareBookSettings, dirtyGuardedConfig, unapprovedHistory, WEAVER_DENY_RULES } from "./guard.mjs";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -317,6 +318,13 @@ export function runDoctor({ bookRoot, packageRoot = PACKAGE_ROOT, nodeVersion = 
   if (!available) warnings.push(...availableFinding);
   checks.push(checkResult(FINDINGS.hostAvailable.id, FINDINGS.hostAvailable.title, available ? "pass" : "warning", availableFinding));
 
+  const reviewerFindings = reviewerWarnings(root).map((problem) => ({
+    id: "book-reviewers", title: "Book reviewer settings", problem,
+    why: "This reviewer is skipped; other reviewers still run.",
+    fix: "Correct the named reviewer file in quality/reviewers."
+  }));
+  warnings.push(...reviewerFindings);
+  checks.push(checkResult("book-reviewers", "Book reviewer settings", reviewerFindings.length ? "warning" : "pass", reviewerFindings));
   return { generator: GENERATOR, ok: blocking.length === 0, blocking, warnings, checks };
 }
 

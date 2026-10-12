@@ -4,32 +4,41 @@ import { existsSync, readFileSync } from "node:fs";
 import { loadScenes } from "./manuscript.mjs";
 import { runRules } from "./rules.mjs";
 import { runVoiceCheck } from "./voice.mjs";
-import { LENSES, reviewInputs, reviewIsCurrent, reviewRecordPath } from "./review.mjs";
+import { listLenses, buildReviewPacket, reviewInputs, reviewIsCurrent, reviewRecordPath } from "./review.mjs";
 import { applyRulings } from "./rulings.mjs";
 
 export const MAX_QUEUED_JUDGMENTS = 6;
 export const MAX_CRITIC_FAIL_CRAFT = 2;
-const PRIORITY = { continuity: 0, style: 1, critic: 2 };
 const SEVERITY_PRIORITY = { definite: 0, craft: 1, ambiguity: 2, minor: 3 };
 
 function reviewJudgments(root, project, chapter, scenes) {
   const inputs = reviewInputs(root, project, chapter, scenes);
   const candidates = [];
   const stale = [];
-  for (const lens of LENSES) {
+  const lenses = listLenses(root);
+  const priority = new Map(lenses.map((lens, index) => [lens.id, index]));
+  for (const definition of lenses) {
+    const lens = definition.id;
     const path = reviewRecordPath(root, chapter, lens);
     if (!existsSync(path)) continue;
     const record = JSON.parse(readFileSync(path, "utf8"));
-    if (!reviewIsCurrent(record, inputs)) { stale.push(lens); continue; }
+    if (!reviewIsCurrent(record, inputs, buildReviewPacket(root, project, chapter, lens, inputs))) { stale.push(lens); continue; }
     let criticSelected = 0;
-    for (const finding of record.findings || []) {
-      const eligible = finding.severity === "definite" ||
+    let bookSelected = 0;
+    const findings = [...(record.findings || [])];
+    if (!definition.builtin) findings.sort((a, b) => SEVERITY_PRIORITY[a.severity] - SEVERITY_PRIORITY[b.severity] || a.paragraph - b.paragraph);
+    for (const finding of findings) {
+      let eligible = finding.severity === "definite" ||
         (lens === "critic" && record.verdict === "FAIL" && ["craft", "definite"].includes(finding.severity) && criticSelected < MAX_CRITIC_FAIL_CRAFT);
+      if (!definition.builtin && definition.queue !== "definite") {
+        eligible = record.verdict === definition.verdicts[1] && ["definite", "craft"].includes(finding.severity) && bookSelected < Number(definition.queue.slice(-1));
+        if (eligible) bookSelected += 1;
+      }
       if (lens === "critic" && eligible && ["craft", "definite"].includes(finding.severity)) criticSelected += 1;
-      candidates.push({ ...finding, chapter, lens, verdict: record.verdict, queued: eligible, source: lens });
+      candidates.push({ ...finding, chapter, lens, reviewer_title: definition.title, verdict: record.verdict, queued: eligible, source: lens });
     }
   }
-  const ordered = candidates.sort((a, b) => PRIORITY[a.lens] - PRIORITY[b.lens] ||
+  const ordered = candidates.sort((a, b) => priority.get(a.lens) - priority.get(b.lens) ||
     SEVERITY_PRIORITY[a.severity] - SEVERITY_PRIORITY[b.severity] || a.paragraph - b.paragraph);
   let queued = 0;
   for (const finding of ordered) {
@@ -65,6 +74,7 @@ export function collectFindings(root, project, { chapter = null, all = false, to
         definite_contradictions: findings.filter((item) => item.kind === "judgment" && item.lens === "continuity").length,
         style_breaks: findings.filter((item) => item.kind === "judgment" && item.lens === "style").length,
         critic_issues: findings.filter((item) => item.kind === "judgment" && item.lens === "critic").length,
+        book_reviewers: Object.fromEntries(listLenses(root).filter((lens) => !lens.builtin).map((lens) => [lens.id, findings.filter((item) => item.kind === "judgment" && item.lens === lens.id).length])),
         queued_judgments: findings.filter((item) => item.kind === "judgment").length
       }
     };

@@ -2,7 +2,7 @@
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -154,5 +154,41 @@ test("bootstrap facts and threads appear, and review job refuses overlap", async
     const path = scenePath(root);
     writeFileSync(path, readFileSync(path, "utf8").replace("before dawn", "after dusk"));
     for (const route of ["/", "/book", "/book/chapter-01", "/book/chapter-01/scene-01", "/characters/brask", "/places", "/places/eastern-gate", "/threads", "/findings", "/changes", "/history", "/jobs"]) assert.equal((await app.get(route)).status, 200, route);
+  } finally { await close(app.server); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("studio runs book reviewers, labels their findings by title, and lists all rule scopes", async () => {
+  const root = book("studio");
+  mkdirSync(join(root, "quality", "reviewers"), { recursive: true });
+  writeFileSync(join(root, "quality", "reviewers", "character-audit.md"), "---\nid: character-audit\ntitle: Speaking character audit\nverdicts: [CLEAR, FLAGS]\ncontext: []\nqueue: definite\n---\nAudit every speaker.");
+  writeFileSync(join(root, "quality", "reviewers", "broken.md"), "Broken front matter.");
+  writeFileSync(join(root, "quality", "rules.json"), JSON.stringify({ version: 1, rules: [{
+    id: "house-style", type: "phrase-list", severity: "warn", message: "Check this wording.", phrases: ["lantern"],
+    speakers: ["brask"], except_speakers: ["wren"], pov: ["brask"], except_pov: ["wren"]
+  }] }));
+  const app = await studio(root);
+  try {
+    assert.equal((await app.post("/api/jobs", { kind: "review", chapter: 1 })).status, 202);
+    let job;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      job = await (await app.get("/api/jobs/current")).json();
+      if (job.state !== "running") break;
+      await new Promise((ready) => setTimeout(ready, 100));
+    }
+    assert.equal(job.state, "done", JSON.stringify(job));
+    assert.ok(existsSync(join(root, "review", "chapter-01-character-audit.json")));
+    const page = await app.get("/findings");
+    assert.equal(page.status, 200);
+    const html = await page.text();
+    assert.match(html, /class="chip">Speaking character audit<\/span>/u);
+    assert.match(html, /A definite issue appears in this passage/u);
+    const response = await app.get("/rules");
+    assert.equal(response.status, 200);
+    const rules = await response.text();
+    assert.match(rules, /Applies to dialogue by Brask/u);
+    assert.match(rules, /Skips dialogue attributed to Wren/u);
+    assert.match(rules, /Applies in Brask&#39;s POV chapters/u);
+    assert.match(rules, /Skips Wren&#39;s POV chapters/u);
+    assert.match(rules, /unattributed dialogue is included/u);
   } finally { await close(app.server); rmSync(root, { recursive: true, force: true }); }
 });

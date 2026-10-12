@@ -231,7 +231,7 @@ function speakerTag(text, span, characters) {
   return null;
 }
 
-function attributeSpans(scene, characters) {
+export function attributeSpans(scene, characters) {
   const paragraphs = scene.prose.split(/\n\s*\n/u).filter((paragraph) => paragraph.trim()).map((paragraph, index) => ({
     number: index + 1,
     text: readerText(paragraph)

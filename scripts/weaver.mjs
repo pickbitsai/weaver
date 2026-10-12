@@ -19,6 +19,7 @@ import { seedCharacters } from "../engine/characters.mjs";
 import { buildVoiceProfiles, runVoiceCheck } from "../engine/voice.mjs";
 import { collectFindings } from "../engine/findings.mjs";
 import { runReview, submitReviewPacket } from "../engine/review.mjs";
+import { reviewerWarnings } from "../engine/reviewers.mjs";
 import { rulingStatuses, saveRuling } from "../engine/rulings.mjs";
 import { startStudio } from "../engine/studio.mjs";
 import { authorCommandRefusal, sealBookSettings } from "../engine/guard.mjs";
@@ -193,6 +194,7 @@ try {
     const report = {
       ok: checks.ok,
       issues: checks.issues,
+      warnings: reviewerWarnings(root),
       scenes: checks.scenes.length,
       words: checks.scenes.reduce((sum, scene) => sum + scene.words, 0),
       critical_path: checks.criticalPath,
@@ -328,7 +330,7 @@ try {
     else {
       const { project } = projectContext();
       const chapter = Number(option("--chapter"));
-      if (!Number.isInteger(chapter) || chapter < 1) throw new Error("usage: weaver review --chapter N [--lenses continuity,style,critic] [--run]");
+      if (!Number.isInteger(chapter) || chapter < 1) throw new Error("usage: weaver review --chapter N [--lenses id,id] [--run]");
       const lenses = option("--lenses")?.split(",").map((item) => item.trim()) || undefined;
       await runReview(root, project, { chapter, lenses, run: argv.includes("--run") });
     }
@@ -341,6 +343,7 @@ try {
       for (const entry of result.chapters) {
         const counts = entry.counts;
         print(`Chapter ${entry.chapter}: ${counts.definite_contradictions} definite contradiction(s), ${counts.style_breaks} style break(s), ${counts.critic_issues} critic issue(s), ${entry.note_count} notes (see --all)`);
+        for (const [id, count] of Object.entries(counts.book_reviewers)) print(`  ${id}: ${count} issue(s)`);
         for (const lens of entry.stale_reviews) print(`  ${lens} review out of date, run weaver review --chapter ${entry.chapter}`);
         for (const item of entry.findings) print(`  ${item.id} ${item.source}, ${item.scene_id} paragraph ${item.paragraph}: ${item.quote}\n    ${item.issue}\n    Suggested repair: ${item.repair}${item.ruling ? `\n    ${item.ruling}` : ""}`);
         if (argv.includes("--all")) for (const item of entry.notes) print(`  note ${item.id} ${item.source}, ${item.scene_id} paragraph ${item.paragraph}: ${item.issue}`);
@@ -478,7 +481,7 @@ Usage:
   weaver characters seed [--root directory] [--json]
   weaver voices build [--root directory] [--json]
   weaver voices check [--scene scene-id | --pending] [--root directory] [--json]
-  weaver review --chapter N [--lenses continuity,style,critic] [--run] [--root directory]
+  weaver review --chapter N [--lenses id,id] [--run] [--root directory]
   weaver findings [--chapter N] [--all] [--to-fix] [--json] [--root directory]
   weaver rule <finding-id> --decision fix|allow|intended [--note text] [--root directory]
   weaver rulings [--json] [--root directory]
@@ -512,7 +515,7 @@ Usage:
   weaver characters seed [--root directory] [--json]
   weaver voices build [--root directory] [--json]
   weaver voices check [--scene scene-id | --pending] [--root directory] [--json]
-  weaver review --chapter N [--lenses continuity,style,critic] [--run] [--root directory]
+  weaver review --chapter N [--lenses id,id] [--run] [--root directory]
   weaver findings [--chapter N] [--all] [--to-fix] [--json] [--root directory]
   weaver rule <finding-id> --decision fix|allow|intended [--note text] [--root directory]
   weaver rulings [--json] [--root directory]

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCharacters } from "./characters.mjs";
@@ -10,10 +10,10 @@ import { countWords, loadScenes, sha256 } from "./manuscript.mjs";
 import { buildPacket, extractJsonBlock, validateAndRepair } from "./packets.mjs";
 import { readerText } from "./prose.mjs";
 import { factsLedgerPath, statePath } from "./state.mjs";
+import { listLenses } from "./reviewers.mjs";
+export { listLenses } from "./reviewers.mjs";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-export const LENSES = ["continuity", "style", "critic"];
-export const VERDICTS = { continuity: ["CLEAR", "FLAGS"], style: ["CONSISTENT", "DRIFT"], critic: ["PASS", "FAIL"] };
 const SEVERITIES = new Set(["definite", "ambiguity", "minor", "craft"]);
 
 export function reviewParagraphs(scene) {
@@ -42,16 +42,36 @@ function factsContext(root, chapter) {
   return { text, hash: sha256(text) };
 }
 
-function worldBible(root) {
+function markdownContext(root, folder, { recursive = false, excludeStarters = false } = {}) {
   const lines = [];
-  for (const name of ["characters.md", "locations.md", "terminology.md"]) {
-    const path = join(root, "world-bible", name);
-    const starter = join(PACKAGE_ROOT, "templates", "book", "world-bible", name);
-    if (existsSync(path) && (!existsSync(starter) || readFileSync(path, "utf8") !== readFileSync(starter, "utf8"))) {
-      lines.push(`### ${name}\n${readFileSync(path, "utf8").trim()}`);
+  const names = [];
+  const walk = (prefix = "") => {
+    const directory = join(root, folder, prefix);
+    if (!existsSync(directory)) return;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const name = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (recursive && entry.isDirectory()) walk(name);
+      else if (entry.isFile() && entry.name.endsWith(".md")) names.push(name);
     }
+  };
+  walk();
+  for (const name of names.sort()) {
+    const text = readFileSync(join(root, folder, name), "utf8");
+    const starter = join(PACKAGE_ROOT, "templates", "book", folder, name);
+    if (excludeStarters && existsSync(starter) && text === readFileSync(starter, "utf8")) continue;
+    lines.push(`### ${name}\n${text.trim()}`);
   }
-  return lines.join("\n\n") || "_No project world-bible notes._";
+  return lines.join("\n\n");
+}
+
+function worldBible(root) {
+  return markdownContext(root, "world-bible", { excludeStarters: true }) || "_No project world-bible notes._";
+}
+
+function lensDefinition(root, id) {
+  const lens = listLenses(root).find((item) => item.id === id);
+  if (!lens) throw new Error(`unknown review lens: ${id}`);
+  return lens;
 }
 
 export function reviewInputs(root, project, chapter, scenes = loadScenes(root, project)) {
@@ -66,27 +86,40 @@ export function reviewInputs(root, project, chapter, scenes = loadScenes(root, p
 }
 
 export function reviewRecordPath(root, chapter, lens) {
+  lensDefinition(root, lens);
   return join(root, "review", `chapter-${String(chapter).padStart(2, "0")}-${lens}.json`);
 }
 
-export function reviewIsCurrent(record, inputs) {
+export function reviewIsCurrent(record, inputs, packet) {
   return record?.chapter_prose_sha256 === inputs.proseHash &&
-    (record.lens !== "continuity" || record.facts_sha256 === inputs.facts.hash);
+    record.packet_id === packet.id;
 }
 
 export function buildReviewPacket(root, project, chapter, lens, inputs = reviewInputs(root, project, chapter)) {
-  if (!LENSES.includes(lens)) throw new Error(`unknown review lens: ${lens}`);
-  const lensPrompt = readFileSync(join(PACKAGE_ROOT, "prompts", "reviewers", `${lens}.md`), "utf8").trim();
+  const definition = lensDefinition(root, lens);
+  const lensPrompt = definition.builtin ? readFileSync(join(PACKAGE_ROOT, "prompts", "reviewers", `${lens}.md`), "utf8").trim() : definition.body;
   const registry = JSON.stringify(loadCharacters(root).characters, null, 2);
-  const bible = worldBible(root);
   const paragraphs = inputs.chapterScenes.flatMap(reviewParagraphs);
-  const context = lens === "continuity" ? `## Earlier facts\n${inputs.facts.text}\n\n## Previous chapter narrative state\n${inputs.previous}\n\n` : "";
-  const prompt = `# REVIEW packet chapter ${chapter} lens ${lens}\n\n${lensPrompt}\n\n## Character registry\n${registry}\n\n## World bible\n${bible}\n\n${context}## Chapter reader text\n${paragraphs.map((item) => `[${item.scene_id} p${item.paragraph}] ${item.text}`).join("\n\n")}\n\n## Answer contract\nStart with ${lens.toUpperCase()}: ${VERDICTS[lens].join(" or ")}. Then return a fenced \`\`\`json block: {"verdict":"<lens verdict>","findings":[{"severity":"definite|ambiguity|minor|craft","scene_id":"<id>","paragraph":1,"quote":"<verbatim 3-25 words from that paragraph>","issue":"<one sentence>","repair":"<smallest repair, one sentence>"}]}. Quote only this chapter's reader text.`;
-  return buildPacket("REVIEW", `${chapter}:${lens}`, prompt, {
-    chapter_prose: inputs.proseHash, facts: lens === "continuity" ? inputs.facts.hash || "" : "",
-    previous_state: lens === "continuity" ? sha256(inputs.previous) : "",
-    registry: sha256(registry), world_bible: sha256(bible), lens_prompt: sha256(lensPrompt)
-  }, "review-1");
+  const hashes = { chapter_prose: inputs.proseHash, facts: "", previous_state: "", registry: sha256(registry), world_bible: "", lens_prompt: sha256(lensPrompt) };
+  let context = "";
+  for (const key of definition.context) {
+    let title, text, hash;
+    if (key === "world-bible") { title = "World bible"; text = worldBible(root); }
+    if (key === "outline") {
+      title = "Outline"; text = markdownContext(root, "outline", { recursive: true, excludeStarters: true });
+      // Keep legacy built-in packets byte-identical when there is no authored outline.
+      if (!text && definition.builtin) continue;
+      text ||= "_No project outline notes._";
+    }
+    if (key === "style-guide") { title = "Style guide"; text = markdownContext(root, "style-guide") || "_No style-guide notes._"; }
+    if (key === "facts") { title = "Earlier facts"; text = inputs.facts.text; hash = inputs.facts.hash || ""; }
+    if (key === "previous-state") { title = "Previous chapter narrative state"; text = inputs.previous; }
+    context += `## ${title}\n${text}\n\n`;
+    hashes[key.replaceAll("-", "_")] = hash ?? sha256(text);
+  }
+  if (!definition.builtin) hashes.reviewer_file = definition.hash;
+  const prompt = `# REVIEW packet chapter ${chapter} lens ${lens}\n\n${lensPrompt}\n\n## Character registry\n${registry}\n\n${context}## Chapter reader text\n${paragraphs.map((item) => `[${item.scene_id} p${item.paragraph}] ${item.text}`).join("\n\n")}\n\n## Answer contract\nStart with ${lens.toUpperCase()}: ${definition.verdicts.join(" or ")}. Then return a fenced \`\`\`json block: {"verdict":"<lens verdict>","findings":[{"severity":"definite|ambiguity|minor|craft","scene_id":"<id>","paragraph":1,"quote":"<verbatim 3-25 words from that paragraph>","issue":"<one sentence>","repair":"<smallest repair, one sentence>"}]}. Quote only this chapter's reader text.`;
+  return buildPacket("REVIEW", `${chapter}:${lens}`, prompt, hashes, "review-1");
 }
 
 function normalizeQuote(value) {
@@ -100,10 +133,10 @@ function parsedAnswer(text, lens) {
   const errors = [];
   if (!document || typeof document !== "object" || Array.isArray(document)) errors.push("answer must be a JSON object");
   else {
-    if (!VERDICTS[lens].includes(document.verdict)) errors.push("invalid lens verdict");
+    if (!lens.verdicts.includes(document.verdict)) errors.push("invalid lens verdict");
     if (!Array.isArray(document.findings)) errors.push("findings must be an array");
     const line = String(text).slice(0, parsed.start).trim().split(/\n/u)[0]?.trim();
-    if (line !== `${lens.toUpperCase()}: ${document.verdict}`) errors.push("lens verdict line does not match JSON verdict");
+    if (line !== `${lens.id.toUpperCase()}: ${document.verdict}`) errors.push("lens verdict line does not match JSON verdict");
   }
   return { errors, document };
 }
@@ -125,7 +158,8 @@ function validatedFindings(document, paragraphs) {
   return { findings, dropped, errors };
 }
 
-export function validateReviewAnswer(text, lens, paragraphs) {
+export function validateReviewAnswer(text, lens, paragraphs, root = PACKAGE_ROOT) {
+  if (typeof lens === "string") lens = lensDefinition(root, lens);
   const parsed = parsedAnswer(text, lens);
   if (parsed.errors.length) return { ok: false, value: null, errors: parsed.errors };
   const checked = validatedFindings(parsed.document, paragraphs);
@@ -134,11 +168,12 @@ export function validateReviewAnswer(text, lens, paragraphs) {
 
 async function recordAnswer(root, project, chapter, lens, packet, inputs, text) {
   const paragraphs = inputs.chapterScenes.flatMap(reviewParagraphs);
-  const validator = (answer) => validateReviewAnswer(answer, lens, paragraphs);
+  const definition = lensDefinition(root, lens);
+  const validator = (answer) => validateReviewAnswer(answer, definition, paragraphs);
   const result = await validateAndRepair(root, project, packet, text, validator);
   let value = result.value;
   if (!result.ok) {
-    const parsed = parsedAnswer(result.answerText, lens);
+    const parsed = parsedAnswer(result.answerText, definition);
     if (parsed.errors.length) return { ok: false, errors: parsed.errors };
     const checked = validatedFindings(parsed.document, paragraphs);
     value = { verdict: parsed.document.verdict, findings: checked.findings, dropped_findings: checked.dropped };
@@ -146,7 +181,7 @@ async function recordAnswer(root, project, chapter, lens, packet, inputs, text) 
   const record = {
     $schema: `${SCHEMA_BASE}review-1.json`, chapter, lens, verdict: value.verdict,
     findings: value.findings, dropped_findings: value.dropped_findings,
-    chapter_prose_sha256: inputs.proseHash, facts_sha256: lens === "continuity" ? inputs.facts.hash : null,
+    chapter_prose_sha256: inputs.proseHash, facts_sha256: definition.context.includes("facts") ? inputs.facts.hash : null,
     packet_id: packet.id, generator: GENERATOR
   };
   mkdirSync(join(root, "review"), { recursive: true });
@@ -154,16 +189,17 @@ async function recordAnswer(root, project, chapter, lens, packet, inputs, text) 
   return { ok: true, record };
 }
 
-export async function runReview(root, project, { chapter, lenses = LENSES, run = false, onProgress = (line) => process.stdout.write(`${line}\n`) } = {}) {
-  const selected = [...new Set(lenses)];
-  if (!selected.length || selected.some((lens) => !LENSES.includes(lens))) throw new Error(`lenses must be ${LENSES.join(",")}`);
+export async function runReview(root, project, { chapter, lenses, run = false, onProgress = (line) => process.stdout.write(`${line}\n`) } = {}) {
+  const available = listLenses(root, { onWarning: (message) => onProgress(`Warning: ${message}`) }).map((lens) => lens.id);
+  const selected = [...new Set(lenses ?? available)];
+  if (!selected.length || selected.some((lens) => !available.includes(lens))) throw new Error(`lenses must be ${available.join(",")}`);
   const inputs = reviewInputs(root, project, Number(chapter));
   const pending = [];
   for (const lens of selected) {
     const path = reviewRecordPath(root, Number(chapter), lens);
     const existing = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
-    if (reviewIsCurrent(existing, inputs)) { onProgress(`Chapter ${chapter} ${lens}: skipped, already current`); continue; }
     const packet = buildReviewPacket(root, project, Number(chapter), lens, inputs);
+    if (reviewIsCurrent(existing, inputs, packet)) { onProgress(`Chapter ${chapter} ${lens}: skipped, already current`); continue; }
     mkdirSync(join(root, ".weaver", "packets"), { recursive: true });
     writeFileSync(join(root, ".weaver", "packets", `${packet.id}.json`), `${JSON.stringify(packet, null, 2)}\n`);
     pending.push({ lens, packet });

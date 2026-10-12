@@ -17,6 +17,7 @@ import { parseEscapedProse, readerText } from "./prose.mjs";
 import { readRulings, saveRuling } from "./rulings.mjs";
 import { acceptNarrativeState, narrativeStateStatus, readFactsLedger, statePath } from "./state.mjs";
 import { attributeDialogue } from "./voice.mjs";
+import { loadRules, ruleScopeDescription } from "./rules.mjs";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(PACKAGE_ROOT, "scripts", "weaver.mjs");
@@ -24,7 +25,7 @@ const ASSETS = new Map([
   ["/studio.css", ["text/css; charset=utf-8", readFileSync(join(PACKAGE_ROOT, "studio", "studio.css"))]],
   ["/studio.js", ["text/javascript; charset=utf-8", readFileSync(join(PACKAGE_ROOT, "studio", "studio.js"))]]
 ]);
-const NAV = [["/", "Home"], ["/book", "Book"], ["/characters", "Characters"], ["/places", "Places"], ["/threads", "Threads"], ["/findings", "Findings"], ["/changes", "Changes"], ["/history", "History"], ["/jobs", "Jobs"]];
+const NAV = [["/", "Home"], ["/book", "Book"], ["/characters", "Characters"], ["/places", "Places"], ["/threads", "Threads"], ["/findings", "Findings"], ["/rules", "Rules"], ["/changes", "Changes"], ["/history", "History"], ["/jobs", "Jobs"]];
 const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 const chapterSlug = (number) => `chapter-${String(number).padStart(2, "0")}`;
 const sceneSlug = (number) => `scene-${String(number).padStart(2, "0")}`;
@@ -129,7 +130,7 @@ function threadGroups(root, project, scenes) {
 
 function findingCard(item, { note = false } = {}) {
   const quote = item.quote || item.excerpt || item.line || "";
-  return `<article class="card" id="finding-${esc(item.id)}"><h4>${note ? "Note " : ""}${esc(item.id)} <span class="chip">${esc(item.source)}</span></h4><p><a href="/book/${chapterSlug(Number(item.scene_id.split("-")[0]))}/${sceneSlug(Number(item.scene_id.split("-")[1]))}#p${esc(item.paragraph)}">Scene ${esc(item.scene_id)}, ¶${esc(item.paragraph)}</a></p><blockquote>${esc(quote)}</blockquote><p>${esc(item.issue)}</p><p><strong>Suggested repair:</strong> ${esc(item.repair)}</p>${item.ruling ? `<p class="notice">${esc(item.ruling)}</p>` : ""}${note ? "" : `<div class="actions"><button data-action="ruling" data-id="${esc(item.id)}" data-decision="fix">Fix this</button><button data-action="ruling" data-id="${esc(item.id)}" data-decision="intended">It's intended</button><button data-action="ruling" data-id="${esc(item.id)}" data-decision="allow">Allow</button></div>`}</article>`;
+  return `<article class="card" id="finding-${esc(item.id)}"><h4>${note ? "Note " : ""}${esc(item.id)} <span class="chip">${esc(item.reviewer_title || item.source)}</span></h4><p><a href="/book/${chapterSlug(Number(item.scene_id.split("-")[0]))}/${sceneSlug(Number(item.scene_id.split("-")[1]))}#p${esc(item.paragraph)}">Scene ${esc(item.scene_id)}, ¶${esc(item.paragraph)}</a></p><blockquote>${esc(quote)}</blockquote><p>${esc(item.issue)}</p><p><strong>Suggested repair:</strong> ${esc(item.repair)}</p>${item.ruling ? `<p class="notice">${esc(item.ruling)}</p>` : ""}${note ? "" : `<div class="actions"><button data-action="ruling" data-id="${esc(item.id)}" data-decision="fix">Fix this</button><button data-action="ruling" data-id="${esc(item.id)}" data-decision="intended">It's intended</button><button data-action="ruling" data-id="${esc(item.id)}" data-decision="allow">Allow</button></div>`}</article>`;
 }
 
 function diffWords(before, after) {
@@ -159,6 +160,7 @@ function pageBody(path, root, project, job) {
   const pending = describePendingChanges(root, project);
   const progress = approvalProgress(root, scenes);
   const chapterNumbers = [...new Set(scenes.map((scene) => scene.chapter))];
+  if (path === "/rules") return `<h1>Rules</h1>${loadRules(root).rules.map((rule) => `<article class="card"><h2>${esc(rule.id)}</h2><p>${esc(rule.message)}</p><p>${esc(rule.severity)} · ${esc(rule.type)}</p><p>${esc(ruleScopeDescription(rule, characters))}</p></article>`).join("") || "<p>No rules configured.</p>"}`;
   if (path === "/") {
     const toFix = findings.findings.filter((item) => item.ruling === "author wants this fixed").length;
     return `<h1>${esc(project.title)}</h1><p class="byline">${esc(project.author || "Author not listed")}</p><h2>Progress</h2><p>${progress.approved.size} of ${progress.total} chapters approved since import</p><p>Open findings: ${findings.findings.length - toFix} to decide, ${toFix} to fix</p><p><a href="/book">Read the book</a> · <a href="/changes">Review changes</a></p>`;
