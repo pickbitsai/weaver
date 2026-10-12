@@ -297,11 +297,13 @@ export function undoApproval(root) {
   });
   const approval = entries.find((entry) => /^Approve chapter \d+/u.test(entry.subject));
   if (!approval) throw new Error("There is no approval to undo.");
-  const result = git(root, ["revert", "--no-edit", approval.sha], { stdio: ["ignore", "pipe", "pipe"] });
+  const result = git(root, ["revert", "--no-commit", approval.sha], { stdio: ["ignore", "pipe", "pipe"] });
   if (result.status !== 0) {
     git(root, ["revert", "--abort"], { stdio: ["ignore", "pipe", "ignore"] });
     throw new Error("Undo could not be completed because Git found a conflict. Nothing was changed.");
   }
+  const commit = git(root, ["commit", "-m", `Revert "${approval.subject}"`, "-m", `This reverts commit ${approval.sha}.`, "-m", `Approved-with: ${GENERATOR}`], { stdio: ["ignore", "pipe", "pipe"] });
+  if (commit.status !== 0) throw new Error("The undo is ready, but could not be saved to the book's history.");
   const sha = git(root, ["rev-parse", "--short", "HEAD"], { stdio: ["ignore", "pipe", "pipe"] });
   return { id: sha.stdout.trim(), approval: approval.sha.slice(0, 7) };
 }

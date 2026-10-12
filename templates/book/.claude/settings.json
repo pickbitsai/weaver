@@ -2,18 +2,27 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
             "command": "npx --no-install weaver hook pre"
           }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx --no-install weaver hook shell"
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
@@ -22,5 +31,44 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash(weaver approve:*)",
+      "Bash(npx weaver approve:*)",
+      "Bash(npx --no-install weaver approve:*)",
+      "Bash(npx.cmd weaver approve:*)",
+      "Bash(weaver reject:*)",
+      "Bash(npx weaver reject:*)",
+      "Bash(npx --no-install weaver reject:*)",
+      "Bash(npx.cmd weaver reject:*)",
+      "Bash(weaver undo:*)",
+      "Bash(npx weaver undo:*)",
+      "Bash(npx --no-install weaver undo:*)",
+      "Bash(npx.cmd weaver undo:*)",
+      "Bash(weaver rule:*)",
+      "Bash(npx weaver rule:*)",
+      "Bash(npx --no-install weaver rule:*)",
+      "Bash(npx.cmd weaver rule:*)",
+      "Bash(weaver state:accept:*)",
+      "Bash(npx weaver state:accept:*)",
+      "Bash(npx --no-install weaver state:accept:*)",
+      "Bash(npx.cmd weaver state:accept:*)",
+      "Bash(weaver release:*)",
+      "Bash(npx weaver release:*)",
+      "Bash(npx --no-install weaver release:*)",
+      "Bash(npx.cmd weaver release:*)",
+      "Bash(weaver import:*)",
+      "Bash(npx weaver import:*)",
+      "Bash(npx --no-install weaver import:*)",
+      "Bash(npx.cmd weaver import:*)",
+      "Bash(weaver guard seal:*)",
+      "Bash(npx weaver guard seal:*)",
+      "Bash(npx --no-install weaver guard seal:*)",
+      "Bash(npx.cmd weaver guard seal:*)",
+      "Edit(/.claude/**)",
+      "Edit(/quality/**)"
+    ],
+    "disableBypassPermissionsMode": "disable"
   }
 }

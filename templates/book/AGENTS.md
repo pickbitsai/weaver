@@ -1,23 +1,14 @@
-# Book project instructions
+# Working on this book
 
-This project uses Weaver's revision-safe writing workflow.
+This book uses PickBits Weaver. The author decides what goes into the book.
 
-Before writing or revising a scene:
-
-1. Read `project.json`, the locked scene outline, relevant world-bible and style
-   files, `manuscript/reader-state.md`, and accepted upstream narrative state.
-2. Build or inspect the Weaver grounding packet.
-3. Continue the reader's experience. Do not re-introduce established facts as
-   if the book has restarted.
-
-After drafting:
-
-1. Review continuity, style, and scene function independently.
-2. Do not make major plot restructuring, scene cuts, or publication decisions
-   without human approval.
-3. Update reader state and the scene's narrative-state delta.
-4. Accept narrative state only after the prose and state record are reviewed.
-5. Run Weaver's check before building a reader release.
-
-Never hide a contradiction by changing the state record to match faulty prose.
-Fix the source or explicitly record the unresolved conflict.
+- Edit only the chapter scenes under `manuscript/` and the notes in `world-bible/`, `outline/`
+  and `style-guide/`.
+- Work on one chapter at a time. When it's ready, ask the author to review it on the author page
+  (`npx weaver studio`, then open http://127.0.0.1:4187).
+- Approving, rejecting, undoing, accepting story state, ruling on findings and releasing are the
+  author's buttons, not yours.
+- Weaver checks every edit. When it reports a problem, fix the prose. Never change a rule, a
+  setting or a record to make a check pass.
+- If Weaver itself seems broken, stop and tell the author to contact PickBits support. Don't try
+  to repair the tool.

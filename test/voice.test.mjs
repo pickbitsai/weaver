@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
+import { authorEnv } from "./helpers/env.mjs";
 import assert from "node:assert/strict";
 import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -122,16 +123,17 @@ test("profiles and checks are deterministic, evidentiary, stale-aware, and advis
     assert.ok(result.notes.some((note) => /not enough of their lines yet \(3 lines,/.test(note.message)));
     assert.equal(result.findings.every((finding) => finding.severity === "warn" && finding.type === "voice"), true);
 
-    const changes = spawnSync(process.execPath, [CLI, "changes", "--root", root, "--json"], { cwd: ROOT, encoding: "utf8" });
+    const changes = spawnSync(process.execPath, [CLI, "changes", "--root", root, "--json"], { env: authorEnv(), cwd: ROOT, encoding: "utf8" });
     assert.equal(changes.status, 0, changes.stderr);
     assert.ok(JSON.parse(changes.stdout).chapters[0].voice_warnings > 0);
 
-    const check = spawnSync(process.execPath, [CLI, "check", "--root", root], { cwd: ROOT, encoding: "utf8" });
+    const check = spawnSync(process.execPath, [CLI, "check", "--root", root], { env: authorEnv(), cwd: ROOT, encoding: "utf8" });
     assert.notEqual(check.status, 0, "state is stale in this fixture, but voice findings are not the failure");
     assert.doesNotMatch(check.stdout, /voice warning/);
     assert.equal(JSON.parse(check.stdout).voices.warnings, result.warnings);
 
     const hook = spawnSync(process.execPath, [CLI, "hook", "post"], {
+      env: authorEnv(),
       cwd: root,
       input: JSON.stringify({ cwd: root, tool_name: "Edit", tool_input: { file_path: path } }),
       encoding: "utf8"
@@ -142,14 +144,14 @@ test("profiles and checks are deterministic, evidentiary, stale-aware, and advis
     assert.match(hookOutput.hookSpecificOutput.additionalContext, /Typical lines/);
 
     const voiceId = result.findings.find((finding) => finding.speaker === "Brask").id;
-    const ruling = spawnSync(process.execPath, [CLI, "rule", voiceId, "--decision", "allow", "--root", root], { cwd: ROOT, encoding: "utf8" });
+    const ruling = spawnSync(process.execPath, [CLI, "rule", voiceId, "--decision", "allow", "--root", root], { env: authorEnv(), cwd: ROOT, encoding: "utf8" });
     assert.equal(ruling.status, 0, `${ruling.stdout}\n${ruling.stderr}`);
     assert.equal(runVoiceCheck(root, project).findings.some((finding) => finding.id === voiceId), false);
     writeFileSync(path, readFileSync(path, "utf8").replace('Brask said, "Indeed, the eastern bastion', 'At noon, Brask said, "Indeed, the eastern bastion'));
     assert.equal(runVoiceCheck(root, project).findings.find((finding) => finding.id === voiceId)?.ruling,
       "an earlier ruling no longer applies because the passage changed");
 
-    const approval = spawnSync(process.execPath, [CLI, "approve", "--chapter", "1", "--root", root], { cwd: ROOT, encoding: "utf8" });
+    const approval = spawnSync(process.execPath, [CLI, "approve", "--chapter", "1", "--root", root], { env: authorEnv(), cwd: ROOT, encoding: "utf8" });
     assert.equal(approval.status, 0, `${approval.stdout}\n${approval.stderr}`);
     const approvedProfile = JSON.parse(readFileSync(join(root, "world-bible", "voices", "brask.json"), "utf8"));
     const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim();
@@ -168,17 +170,17 @@ test("characters seed adds imported POVs once", () => {
   const source = join(root, "finished.md");
   const book = join(root, "book");
   try {
-    const initialized = spawnSync(process.execPath, [CLI, "init", book, "--id", "voice-seed", "--title", "Voice Seed", "--empty"], { cwd: ROOT, encoding: "utf8" });
+    const initialized = spawnSync(process.execPath, [CLI, "init", book, "--id", "voice-seed", "--title", "Voice Seed", "--empty"], { env: authorEnv(), cwd: ROOT, encoding: "utf8" });
     assert.equal(initialized.status, 0, `${initialized.stdout}\n${initialized.stderr}`);
     assert.equal(spawnSync("git", ["init", "-q"], { cwd: book }).status, 0);
     writeFileSync(source, "# Brask\n\nA short imported scene.\n\n* * *\n\n# Lady Veyra\n\nA formal imported scene.");
-    let result = spawnSync(process.execPath, [CLI, "import", source, "--root", book], { cwd: ROOT, encoding: "utf8" });
+    let result = spawnSync(process.execPath, [CLI, "import", source, "--root", book], { env: authorEnv(), cwd: ROOT, encoding: "utf8" });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    result = spawnSync(process.execPath, [CLI, "characters", "seed", "--root", book, "--json"], { cwd: ROOT, encoding: "utf8" });
+    result = spawnSync(process.execPath, [CLI, "characters", "seed", "--root", book, "--json"], { env: authorEnv(), cwd: ROOT, encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(loadCharacters(book).characters.map((character) => character.name), ["Brask", "Lady Veyra"]);
     const registry = readFileSync(join(book, "world-bible", "characters.json"), "utf8");
-    result = spawnSync(process.execPath, [CLI, "characters", "seed", "--root", book, "--json"], { cwd: ROOT, encoding: "utf8" });
+    result = spawnSync(process.execPath, [CLI, "characters", "seed", "--root", book, "--json"], { env: authorEnv(), cwd: ROOT, encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(readFileSync(join(book, "world-bible", "characters.json"), "utf8"), registry);
     assert.equal(JSON.parse(result.stdout).added.length, 0);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,10 +9,41 @@ import { compareIntegrity } from "./integrity.mjs";
 import { GENERATOR } from "./identity.mjs";
 import { WEAVER_HOOK_COMMANDS } from "./hooks.mjs";
 import { hostAvailable } from "./host.mjs";
+import { compareBookSettings, dirtyGuardedConfig, unapprovedHistory, WEAVER_DENY_RULES } from "./guard.mjs";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const FINDINGS = {
+  guardrailsInstalled: {
+    id: "guardrails-installed", title: "Author guardrails installed",
+    problem: "Weaver's author guardrails are missing or turned off",
+    why: "The AI must leave decisions and book settings to the author.",
+    fix: "Ask PickBits to restore the guardrails with `weaver hooks install`."
+  },
+  settingsSealed: {
+    id: "book-settings-sealed", title: "Book settings match their seal",
+    problem: "Your book's settings were changed after they were sealed",
+    why: "Changed settings can hide problems in the prose or turn off the checks.",
+    fix: "Contact PickBits to review and restore the settings, or seal an intended change with `weaver guard seal`."
+  },
+  settingsUnsealed: {
+    id: "book-settings-sealed", title: "Book settings match their seal",
+    problem: "Settings not sealed yet; PickBits seals them at hand-over",
+    why: "A seal makes later changes to the book's settings visible.",
+    fix: "Ask PickBits to run `weaver guard seal` at hand-over."
+  },
+  approvedHistory: {
+    id: "approved-history", title: "Manuscript history has author approval",
+    problem: "Changes entered the book without the author's approval",
+    why: "Every manuscript change after the starting point needs an author approval record.",
+    fix: "Contact PickBits to review the listed commits and recover the approved book."
+  },
+  protectedFilesClean: {
+    id: "protected-files-clean", title: "Book settings have no pending changes",
+    problem: "Your book's settings have uncommitted changes",
+    why: "These settings changes have not been saved in the book's history.",
+    fix: "Tell the author and contact PickBits to review the changed settings."
+  },
   node: {
     id: "node-version",
     problem: "Node.js is older than version 22",
@@ -137,10 +169,30 @@ function copiedWeaverEngine(bookRoot) {
   return walk(bookRoot);
 }
 
-function hookEntryInstalled(entries, command) {
-  return Array.isArray(entries) && entries.some((entry) => entry?.matcher === WEAVER_HOOK_COMMANDS.matcher
+function hookEntryInstalled(entries, command, matcher = WEAVER_HOOK_COMMANDS.matcher) {
+  return Array.isArray(entries) && entries.some((entry) => entry?.matcher === matcher
     && Array.isArray(entry.hooks)
     && entry.hooks.some((hook) => hook?.type === "command" && hook.command === command));
+}
+
+function guardrailsInstalled(root, homeDirectory) {
+  const problems = [];
+  let settings = {};
+  for (const [path, label] of [[join(root, ".claude", "settings.json"), ".claude/settings.json"], [join(root, ".claude", "settings.local.json"), ".claude/settings.local.json"], [join(homeDirectory, ".claude", "settings.json"), "~/.claude/settings.json"]]) {
+    if (!existsSync(path)) continue;
+    try {
+      const document = JSON.parse(readFileSync(path, "utf8"));
+      if (!document || typeof document !== "object" || Array.isArray(document)) throw new Error("expected settings");
+      if (label === ".claude/settings.json") settings = document;
+      if (document.disableAllHooks === true) problems.push(`${label} turns off all hooks`);
+    } catch { problems.push(`${label} cannot be read`); }
+  }
+  if (!hookEntryInstalled(settings.hooks?.PreToolUse, WEAVER_HOOK_COMMANDS.pre)
+    || !hookEntryInstalled(settings.hooks?.PostToolUse, WEAVER_HOOK_COMMANDS.post)
+    || !hookEntryInstalled(settings.hooks?.PreToolUse, WEAVER_HOOK_COMMANDS.shell, WEAVER_HOOK_COMMANDS.shellMatcher)) problems.push("a required edit or shell hook is missing");
+  if (!Array.isArray(settings.permissions?.deny) || !WEAVER_DENY_RULES.every((rule) => settings.permissions.deny.includes(rule))) problems.push("an author permission rule is missing");
+  if (settings.permissions?.disableBypassPermissionsMode !== "disable") problems.push("permission bypass has not been disabled");
+  return problems;
 }
 
 function hooksInstalled(bookRoot) {
@@ -165,7 +217,7 @@ function hooksRunnable(bookRoot) {
   return result.status === 0 && result.stdout.includes(GENERATOR);
 }
 
-export function runDoctor({ bookRoot, packageRoot = PACKAGE_ROOT, nodeVersion = process.versions.node } = {}) {
+export function runDoctor({ bookRoot, packageRoot = PACKAGE_ROOT, nodeVersion = process.versions.node, homeDirectory = homedir() } = {}) {
   const root = resolve(bookRoot || process.cwd());
   const blocking = [];
   const warnings = [];
@@ -224,6 +276,41 @@ export function runDoctor({ bookRoot, packageRoot = PACKAGE_ROOT, nodeVersion = 
   let project = {};
   try { project = JSON.parse(readFileSync(join(root, "project.json"), "utf8")); } catch {
     // The project check is reported elsewhere; a missing project cannot make this warning blocking.
+  }
+  const addGuardCheck = (template, status, details = {}) => {
+    const findings = status === "pass" ? [] : [finding(template, details)];
+    if (status === "blocking") blocking.push(...findings);
+    if (status === "warning") warnings.push(...findings);
+    checks.push(checkResult(template.id, template.title, status, findings));
+  };
+  const guardProblems = guardrailsInstalled(root, homeDirectory);
+  addGuardCheck(FINDINGS.guardrailsInstalled, guardProblems.length ? "blocking" : "pass", {
+    problem: `${FINDINGS.guardrailsInstalled.problem}: ${guardProblems.join("; ")}`,
+    fix: guardProblems.some((problem) => problem.startsWith("~")) ? "Your user-level Claude settings disable or prevent the checks. Contact PickBits to restore them." : FINDINGS.guardrailsInstalled.fix
+  });
+  try {
+    const seal = compareBookSettings(root);
+    addGuardCheck(seal.status === "warning" ? FINDINGS.settingsUnsealed : FINDINGS.settingsSealed, seal.status, seal.paths.length ? {
+      paths: seal.paths, problem: `${FINDINGS.settingsSealed.problem}: ${seal.paths.join(", ")}`
+    } : {});
+  } catch {
+    addGuardCheck(FINDINGS.settingsSealed, "blocking", { problem: "Your book's settings seal cannot be checked" });
+  }
+  try {
+    const commits = inGit ? unapprovedHistory(root, project.source_root || "manuscript") : [];
+    addGuardCheck(FINDINGS.approvedHistory, commits.length ? "blocking" : "pass", {
+      commits, problem: `${FINDINGS.approvedHistory.problem}: ${commits.map((commit) => `${commit.sha} ${commit.subject}`).join("; ")}`
+    });
+  } catch {
+    addGuardCheck(FINDINGS.approvedHistory, "blocking", { problem: "Your book's approval history cannot be checked" });
+  }
+  try {
+    const paths = inGit ? dirtyGuardedConfig(root) : [];
+    addGuardCheck(FINDINGS.protectedFilesClean, paths.length ? "warning" : "pass", {
+      paths, problem: `${FINDINGS.protectedFilesClean.problem}: ${paths.join(", ")}`
+    });
+  } catch {
+    addGuardCheck(FINDINGS.protectedFilesClean, "warning", { problem: "Pending book settings changes cannot be checked" });
   }
   const available = hostAvailable(project);
   const availableFinding = available ? [] : [finding(FINDINGS.hostAvailable)];

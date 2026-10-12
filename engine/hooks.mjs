@@ -7,19 +7,22 @@ import { readProject } from "./project.mjs";
 import { loadRules, runRules } from "./rules.mjs";
 import { otherPendingChapters } from "./changes.mjs";
 import { runVoiceCheck } from "./voice.mjs";
+import { editGuard, shellGuard, WEAVER_DENY_RULES } from "./guard.mjs";
 
-const MATCHER = "Edit|Write|MultiEdit";
+const MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
+const SHELL_MATCHER = "Bash|PowerShell";
 const PRE_COMMAND = "npx --no-install weaver hook pre";
 const POST_COMMAND = "npx --no-install weaver hook post";
+const SHELL_COMMAND = "npx --no-install weaver hook shell";
 
-export const WEAVER_HOOK_COMMANDS = { pre: PRE_COMMAND, post: POST_COMMAND, matcher: MATCHER };
+export const WEAVER_HOOK_COMMANDS = { pre: PRE_COMMAND, post: POST_COMMAND, shell: SHELL_COMMAND, matcher: MATCHER, shellMatcher: SHELL_MATCHER };
 
 function hookEntry(matcher, command) {
   return { matcher, hooks: [{ type: "command", command }] };
 }
 
-function isWeaverEntry(entry, command) {
-  return entry?.matcher === MATCHER && Array.isArray(entry.hooks) && entry.hooks.some((hook) => hook?.type === "command" && hook.command === command);
+function isWeaverEntry(entry, command, matcher) {
+  return entry?.matcher === matcher && Array.isArray(entry.hooks) && entry.hooks.some((hook) => hook?.type === "command" && hook.command === command);
 }
 
 export function installHooks(root) {
@@ -39,15 +42,21 @@ export function installHooks(root) {
   if (!next.hooks || typeof next.hooks !== "object" || Array.isArray(next.hooks)) next.hooks = {};
   if (!Array.isArray(next.hooks.PreToolUse)) next.hooks.PreToolUse = [];
   if (!Array.isArray(next.hooks.PostToolUse)) next.hooks.PostToolUse = [];
-  let changed = false;
-  if (!next.hooks.PreToolUse.some((entry) => isWeaverEntry(entry, PRE_COMMAND))) {
-    next.hooks.PreToolUse.push(hookEntry(MATCHER, PRE_COMMAND));
-    changed = true;
+  for (const [event, matcher, command] of [["PreToolUse", MATCHER, PRE_COMMAND], ["PostToolUse", MATCHER, POST_COMMAND], ["PreToolUse", SHELL_MATCHER, SHELL_COMMAND]]) {
+    // Upgrade an old Weaver matcher without changing unrelated hooks in it.
+    for (const entry of next.hooks[event]) {
+      if (entry?.matcher === "Edit|Write|MultiEdit" && Array.isArray(entry.hooks)) {
+        entry.hooks = entry.hooks.filter((hook) => hook?.command !== command);
+      }
+    }
+    next.hooks[event] = next.hooks[event].filter((entry) => !Array.isArray(entry?.hooks) || entry.hooks.length);
+    if (!next.hooks[event].some((entry) => isWeaverEntry(entry, command, matcher))) next.hooks[event].push(hookEntry(matcher, command));
   }
-  if (!next.hooks.PostToolUse.some((entry) => isWeaverEntry(entry, POST_COMMAND))) {
-    next.hooks.PostToolUse.push(hookEntry(MATCHER, POST_COMMAND));
-    changed = true;
-  }
+  if (!next.permissions || typeof next.permissions !== "object" || Array.isArray(next.permissions)) next.permissions = {};
+  if (!Array.isArray(next.permissions.deny)) next.permissions.deny = [];
+  for (const rule of WEAVER_DENY_RULES) if (!next.permissions.deny.includes(rule)) next.permissions.deny.push(rule);
+  next.permissions.disableBypassPermissionsMode = "disable";
+  const changed = JSON.stringify(next) !== JSON.stringify(settings);
   if (changed || !existed) {
     mkdirSync(directory, { recursive: true });
     writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`);
@@ -68,7 +77,9 @@ function hookScene(payload) {
   return { cwd, project, absolute, sceneId: `${Number(sceneId[1])}-${Number(sceneId[2])}` };
 }
 
-function preHook(payload) {
+function preHook(payload, decide) {
+  const denial = decide(payload);
+  if (denial) return denial;
   const scene = hookScene(payload);
   if (!scene) return null;
   const rules = loadRules(scene.cwd).rules;
@@ -117,8 +128,15 @@ function postHook(payload) {
   return null;
 }
 
-export function runHook(kind, payload) {
-  return kind === "pre" ? preHook(payload) : postHook(payload);
+export function runHook(kind, payload, { decideEdit = editGuard, decideShell = shellGuard } = {}) {
+  try {
+    if (kind === "shell") return decideShell(payload);
+    if (kind === "pre") return preHook(payload, decideEdit);
+    return kind === "post" ? postHook(payload) : null;
+  } catch {
+    // Malformed payloads and internal errors fail open; doctor reports damage.
+    return null;
+  }
 }
 
 export function scenePathForHook(root, project, sceneId) {

@@ -21,6 +21,7 @@ import { collectFindings } from "../engine/findings.mjs";
 import { runReview, submitReviewPacket } from "../engine/review.mjs";
 import { rulingStatuses, saveRuling } from "../engine/rulings.mjs";
 import { startStudio } from "../engine/studio.mjs";
+import { authorCommandRefusal, sealBookSettings } from "../engine/guard.mjs";
 
 const argv = process.argv.slice(2);
 const command = argv.shift() || "help";
@@ -106,11 +107,10 @@ function warnAboutDoctor(root) {
   }
 }
 
-function refuseIfDoctorBlocks(root, command, { allowHookInstall = false } = {}) {
+function refuseIfDoctorBlocks(root, command, { allowHookInstall = false, allowSeal = false } = {}) {
   const report = doctorReport(root);
-  const blocking = allowHookInstall
-    ? report.blocking.filter((finding) => finding.id !== "hooks-installed")
-    : report.blocking;
+  const blocking = report.blocking.filter((finding) => !(allowHookInstall && ["hooks-installed", "guardrails-installed"].includes(finding.id))
+    && !(allowSeal && finding.id === "book-settings-sealed"));
   if (!blocking.length) return false;
   const [first, ...rest] = blocking;
   print({
@@ -125,7 +125,13 @@ function refuseIfDoctorBlocks(root, command, { allowHookInstall = false } = {}) 
 
 try {
   const root = resolve(option("--root", process.cwd()));
-  if (command === "doctor") {
+  const authorCommand = command === "guard" ? `guard ${positional()}` : command;
+  const refusal = authorCommandRefusal(authorCommand);
+  if (refusal) {
+    if (argv.includes("--json")) print(refusal);
+    else print(`error: ${refusal.error}\nwhy: ${refusal.why}\nfix: ${refusal.fix}`);
+    process.exitCode = 1;
+  } else if (command === "doctor") {
     const report = doctorReport(root);
     if (argv.includes("--json")) print(report);
     else {
@@ -135,6 +141,7 @@ try {
         print(`${symbol} ${check.title}`);
         for (const finding of check.findings) {
           if (check.status !== "pass") {
+            print(`  ${finding.problem}`);
             print(`  Why: ${finding.why}`);
             print(`  Fix: ${finding.fix}`);
             if (finding.paths?.length) print(`  Files: ${finding.paths.join(", ")}`);
@@ -264,7 +271,14 @@ try {
       const result = installHooks(root);
       print(`${result.changed ? (result.created ? "Created" : "Updated") : "Already installed"} ${result.path}`);
     }
-  } else if (command === "hook" && ["pre", "post"].includes(positional())) {
+  } else if (command === "guard" && positional() === "seal") {
+    if (refuseIfDoctorBlocks(root, authorCommand, { allowSeal: true })) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const result = sealBookSettings(root, project);
+      print(argv.includes("--json") ? result : "Book settings sealed and saved in the author's history.");
+    }
+  } else if (command === "hook" && ["pre", "post", "shell"].includes(positional())) {
     // Hook processes are intentionally fail-open: malformed input and broken books never stop an edit.
     try {
       const payload = JSON.parse(readFileSync(0, "utf8"));
@@ -474,6 +488,7 @@ Usage:
   weaver undo [--root directory]
   weaver history [--root directory] [--json]
   weaver hooks install [--root directory]
+  weaver guard seal [--root directory] [--json]
   weaver state:status [--root directory]
   weaver state bootstrap [--through scene-id] [--run] [--root directory]
   weaver state:accept [--root directory] [--through scene-id]
@@ -507,6 +522,7 @@ Usage:
   weaver undo [--root directory]
   weaver history [--root directory] [--json]
   weaver hooks install [--root directory]
+  weaver guard seal [--root directory] [--json]
   weaver state:status [--root directory]
   weaver state bootstrap [--through scene-id] [--run] [--root directory]
   weaver state:accept [--root directory] [--through scene-id]

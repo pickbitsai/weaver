@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
+import { authorEnv } from "./helpers/env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -44,7 +45,7 @@ function run(root, args, globalConfig = join(tmpdir(), `weaver-global-${process.
   writeFileSync(globalConfig, "");
   return spawnSync(process.execPath, [CLI, ...args], {
     cwd: ROOT,
-    env: { ...process.env, GIT_CONFIG_GLOBAL: globalConfig },
+    env: authorEnv({ GIT_CONFIG_GLOBAL: globalConfig }),
     encoding: "utf8"
   });
 }
@@ -159,7 +160,7 @@ test("approve keeps an author's existing Git identity instead of overriding it l
   const root = book();
   const globalConfig = join(tmpdir(), `weaver-global-identity-${process.pid}.config`);
   writeFileSync(globalConfig, "[user]\n\tname = Real Person\n\temail = real@example.invalid\n");
-  const env = { ...process.env, GIT_CONFIG_GLOBAL: globalConfig };
+  const env = authorEnv({ GIT_CONFIG_GLOBAL: globalConfig });
   try {
     const first = scenePath(root);
     writeFileSync(first, readFileSync(first, "utf8").replace("different state.", "different and uncertain state."));

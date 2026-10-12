@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
+import { authorEnv } from "./helpers/env.mjs";
 import assert from "node:assert/strict";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -177,7 +178,7 @@ test("import records and reports comments, footnotes, and endnotes left out", ()
       ["word/footnotes.xml", FOOTNOTES_XML],
       ["word/endnotes.xml", ENDNOTES_XML]
     ]));
-    const result = spawnSync(process.execPath, [join(ROOT, "scripts", "weaver.mjs"), "import", source, "--root", root], { cwd: ROOT, encoding: "utf8" });
+    const result = spawnSync(process.execPath, [join(ROOT, "scripts", "weaver.mjs"), "import", source, "--root", root], { env: authorEnv(), cwd: ROOT, encoding: "utf8" });
     assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
     assert.match(result.stdout, /Not imported: 3 comments, 1 footnote\./);
     const record = JSON.parse(readFileSync(join(root, "imports", readdirSync(join(root, "imports"))[0]), "utf8"));
@@ -223,6 +224,7 @@ test("import refuses existing scenes and the CLI doctor gate refuses a non-Git b
     assert.equal(existsSync(join(existing, "imports")), false);
     rmSync(join(noGit, ".git"), { recursive: true, force: true });
     const result = spawnSync(process.execPath, [join(ROOT, "scripts", "weaver.mjs"), "import", source, "--root", noGit], {
+      env: authorEnv(),
       cwd: ROOT,
       encoding: "utf8"
     });

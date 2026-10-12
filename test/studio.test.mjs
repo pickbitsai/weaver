@@ -63,6 +63,8 @@ test("health, local binding, page routes, traversal, and POST protection", async
       assert.equal(response.status, 200, route);
       const html = await response.text();
       assert.match(html, /Supported setup: yes/u);
+      assert.match(html, /Guardrails: on/u);
+      assert.match(html, /Settings not sealed yet/u);
       assert.match(html, /Weaver install unchanged: yes/u);
       assert.doesNotMatch(html, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
     }
@@ -74,10 +76,24 @@ test("health, local binding, page routes, traversal, and POST protection", async
     const noHeader = await fetch(`${app.base}/api/approve`, { method: "POST", headers: { Origin: app.base }, body: "{}" });
     assert.equal(noHeader.status, 403);
     assert.equal((await app.post("/api/approve", {}, { Origin: "http://foreign.example" })).status, 403);
+    const settingsPath = join(root, ".claude", "settings.json");
+    const original = readFileSync(settingsPath, "utf8");
+    const settings = JSON.parse(original);
+    settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter((entry) => entry.matcher !== "Bash|PowerShell");
+    writeFileSync(settingsPath, JSON.stringify(settings));
+    const broken = await (await app.get("/")).text();
+    assert.match(broken, /Guardrails: off/u);
+    assert.match(broken, /a required edit or shell hook is missing/u);
+    assert.equal((await app.post("/api/approve", { chapter: 1 })).status, 409);
+    writeFileSync(settingsPath, original);
+    assert.match(await (await app.get("/")).text(), /Guardrails: on/u);
   } finally { await close(app.server); rmSync(root, { recursive: true, force: true }); }
 });
 
-test("approve, reject, undo, progress, and ruling lapse use engine decisions", async () => {
+test("approve, reject, undo, progress, and ruling lapse use engine decisions", async (t) => {
+  const originalHost = process.env.CLAUDECODE;
+  process.env.CLAUDECODE = "1";
+  t.after(() => { if (originalHost === undefined) delete process.env.CLAUDECODE; else process.env.CLAUDECODE = originalHost; });
   const root = book();
   const app = await studio(root);
   try {

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { approveChapter, approvalHistory, describePendingChanges, pendingChanges, rejectChapter, undoApproval } from "./changes.mjs";
 import { loadCharacters, characterKebabCase } from "./characters.mjs";
 import { runDoctor } from "./doctor.mjs";
+import { GUARD_CHECK_IDS } from "./guard.mjs";
 import { collectFindings } from "./findings.mjs";
 import { GENERATOR } from "./identity.mjs";
 import { loadScenes } from "./manuscript.mjs";
@@ -219,8 +220,11 @@ function pageBody(path, root, project, job) {
 function layout(body, root, project) {
   const doctor = runDoctor({ bookRoot: root });
   const first = doctor.blocking[0];
+  const guardChecks = doctor.checks.filter((check) => GUARD_CHECK_IDS.includes(check.id));
+  const guardOn = !guardChecks.some((check) => check.status === "blocking");
+  const guardProblem = (guardChecks.find((check) => check.status === "blocking") || guardChecks.find((check) => check.status === "warning"))?.findings[0];
   const integrity = doctor.checks.find((item) => item.id === "install-integrity")?.status === "pass";
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(project.title)} · Weaver Studio</title><link rel="stylesheet" href="/studio.css"><script src="/studio.js" defer></script></head><body><a class="skip" href="#main">Skip to content</a><header><strong>Weaver Studio</strong><nav aria-label="Main navigation">${NAV.map(([href, label]) => `<a href="${href}">${label}</a>`).join("")}</nav></header><main id="main">${body}</main><p id="action-message" role="status" aria-live="polite"></p><footer><h2>Doctor</h2><p>Supported setup: ${doctor.ok ? "yes" : "no"}${first ? ` · ${esc(first.problem)}. ${esc(first.why)} ${esc(first.fix)}` : ""}</p><p>Weaver install unchanged: ${integrity ? "yes" : "no"}</p></footer></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(project.title)} · Weaver Studio</title><link rel="stylesheet" href="/studio.css"><script src="/studio.js" defer></script></head><body><a class="skip" href="#main">Skip to content</a><header><strong>Weaver Studio</strong><nav aria-label="Main navigation">${NAV.map(([href, label]) => `<a href="${href}">${label}</a>`).join("")}</nav></header><main id="main">${body}</main><p id="action-message" role="status" aria-live="polite"></p><footer><h2>Doctor</h2><p>Supported setup: ${doctor.ok ? "yes" : "no"}${first ? ` · ${esc(first.problem)}. ${esc(first.why)} ${esc(first.fix)}` : ""}</p><p>Guardrails: ${guardOn ? "on" : "off"}${guardProblem ? ` &middot; ${esc(guardProblem.problem)}` : ""}</p><p>Weaver install unchanged: ${integrity ? "yes" : "no"}</p></footer></body></html>`;
 }
 
 function send(response, status, type, body) {
@@ -250,7 +254,7 @@ async function requestJson(request) {
 export async function startStudio({ root = process.cwd(), port = null } = {}) {
   root = resolve(root);
   const project = readProject(root);
-  const selectedPort = port === null ? project.studio?.port ?? 4187 : Number(port);
+  const selectedPort = port === null ? project.studio_port ?? project.studio?.port ?? 4187 : Number(port);
   if (!Number.isInteger(selectedPort) || selectedPort < 0 || selectedPort > 65535) throw new Error("Studio port must be an integer from 0 to 65535.");
   let currentJob = null;
   let boundPort = selectedPort;

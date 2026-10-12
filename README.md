@@ -36,6 +36,44 @@ These are requirements, not suggestions:
 `weaver doctor` checks all of this. Until it passes, Weaver won't write to your
 book, and it tells you in plain words what to fix.
 
+## Guardrails
+
+The AI edits prose; the author decides. Author commands (`approve`, `reject`,
+`undo`, `rule`, `state:accept`, `release`, `import`, and `guard seal`) refuse in
+Claude Code and Codex shells. The author page still works when an AI launches it.
+Claude Code edit and shell hooks block protected settings and records, author
+commands, Git history/config writes, tool installation changes, and requests to
+the local author page. Ordinary prose edits, notes, checks, and reads stay available.
+
+`weaver init` and `weaver hooks install` install the hooks and permission rules.
+The rules use `Bash(npx weaver approve:*)` and the equivalent forms for every
+author command (bare `weaver`, `npx`, `npx --no-install`, and `npx.cmd`).
+`Edit(/.claude/**)` and `Edit(/quality/**)` are anchored to the book's project
+settings, apply to all built-in edit tools, and leave reads available. These use
+the documented [Claude Code permission syntax](https://code.claude.com/docs/en/permissions).
+Pre-hooks return the documented [deny decision](https://code.claude.com/docs/en/hooks#pretooluse-decision-control).
+Permission bypass is disabled in the installed project settings.
+
+At hand-over, PickBits runs `weaver guard seal` from an author shell. It records
+CRLF-normalized SHA-256 fingerprints in `.weaver/guard.json` and commits that
+seal with an approval trailer. It covers both book Claude settings files
+(including an absent local file), `CLAUDE.md`, `AGENTS.md`, `project.json`, and
+every file under `quality/`. Rulings live separately in `continuity/rulings.json`
+and do not invalidate the seal. Intentional settings changes require review and
+resealing; sealing commits only the seal, leaving other pending work untouched.
+
+Doctor detects missing hooks or permission rules, disabled hooks in book or user
+settings, changed sealed files, and manuscript commits without approval after
+the most recent import or initial commit. Unsealed books and pending settings
+changes produce warnings. The studio footer shows guardrail status and the first
+problem, including warnings.
+
+These guards are pattern matching, not a sandbox. The AI runs as the same user,
+so a determined workaround is possible. They stop the normal paths and obvious
+disguises; doctor, sealed settings, and approved history make changes that get
+through visible. That visibility is the support line, not a tamper-proof audit:
+someone able to rewrite both settings and history can also forge the records.
+
 ## Quick start
 
 Requirements: Node.js 22 or newer. There are no runtime dependencies.

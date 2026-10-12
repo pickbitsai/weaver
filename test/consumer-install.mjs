@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
+import { authorEnv } from "./helpers/env.mjs";
 import assert from "node:assert/strict";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,7 +15,7 @@ const book = join(consumer, "book");
 const repairBook = join(consumer, "repair-book");
 const finishedSource = join(consumer, "finished.md");
 const npmCli = process.env.npm_execpath;
-const env = { ...process.env, NPM_CONFIG_CACHE: join(sandbox, "npm-cache") };
+const env = authorEnv({ NPM_CONFIG_CACHE: join(sandbox, "npm-cache") });
 let studioChild;
 assert.ok(npmCli, "npm_execpath is required; run this check through npm");
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
+import { authorEnv } from "./helpers/env.mjs";
 import assert from "node:assert/strict";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -20,7 +21,7 @@ const FAKE_HOST = join(ROOT, "test", "fixtures", "fake-host.mjs");
 function runWeaver(args, root, extraEnv = {}) {
   return spawnSync(process.execPath, [CLI, ...args, "--root", root], {
     cwd: ROOT,
-    env: { ...process.env, ...extraEnv },
+    env: authorEnv(extraEnv),
     encoding: "utf8"
   });
 }

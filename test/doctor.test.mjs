@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
+import { authorEnv } from "./helpers/env.mjs";
 import assert from "node:assert/strict";
 import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -27,6 +28,7 @@ function makeBook({ git = true } = {}) {
 
 function runWeaver(args) {
   return spawnSync(process.execPath, [CLI, ...args], {
+    env: authorEnv(),
     cwd: ROOT,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]

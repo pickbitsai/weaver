@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
+import { authorEnv } from "./helpers/env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -73,23 +74,23 @@ test("blocking rules fail check and release while warnings remain advisory", () 
   try {
     assert.equal(existsSync(join(root, "quality", "rules.json")), true);
     assert.equal(spawnSync("git", ["init", "-q"], { cwd: root }).status, 0);
-    let result = spawnSync(process.execPath, [CLI, "state:accept", "--root", root], { encoding: "utf8" });
+    let result = spawnSync(process.execPath, [CLI, "state:accept", "--root", root], { env: authorEnv(), encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
-    result = spawnSync(process.execPath, [CLI, "check", "--root", root], { encoding: "utf8" });
+    result = spawnSync(process.execPath, [CLI, "check", "--root", root], { env: authorEnv(), encoding: "utf8" });
     assert.equal(result.status, 1);
     const check = JSON.parse(result.stdout);
     assert.deepEqual(check.issues, ["style rules: 1 blocking finding(s)"]);
     assert.deepEqual(check.rules, { blocking: 1, warnings: 0 });
-    result = spawnSync(process.execPath, [CLI, "release", "--root", root, "--id", "blocked"], { encoding: "utf8" });
+    result = spawnSync(process.execPath, [CLI, "release", "--root", root, "--id", "blocked"], { env: authorEnv(), encoding: "utf8" });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /style rules: 1 blocking finding\(s\)/);
 
     const warningRoot = fixture([{ id: "warn-delve", type: "phrase-list", severity: "warn", message: "Use specific prose.", phrases: ["delve"] }], "The first line creates a pressure the protagonist cannot ignore. Delve.");
     try {
       assert.equal(spawnSync("git", ["init", "-q"], { cwd: warningRoot }).status, 0);
-      result = spawnSync(process.execPath, [CLI, "state:accept", "--root", warningRoot], { encoding: "utf8" });
+      result = spawnSync(process.execPath, [CLI, "state:accept", "--root", warningRoot], { env: authorEnv(), encoding: "utf8" });
       assert.equal(result.status, 0, result.stderr);
-      result = spawnSync(process.execPath, [CLI, "check", "--root", warningRoot], { encoding: "utf8" });
+      result = spawnSync(process.execPath, [CLI, "check", "--root", warningRoot], { env: authorEnv(), encoding: "utf8" });
       assert.equal(result.status, 0, result.stderr);
       assert.deepEqual(JSON.parse(result.stdout).rules, { blocking: 0, warnings: 1 });
     } finally {
