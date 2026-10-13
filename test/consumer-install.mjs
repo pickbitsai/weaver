@@ -78,6 +78,8 @@ try {
   assert.match(bookGitignore, /\.weaver\/tmp\//);
   assert.match(bookGitignore, /\.weaver\/rejected\//);
   assert.ok(existsSync(join(book, ".claude", "settings.json")));
+  assert.ok(existsSync(join(book, ".codex", "hooks.json")));
+  assert.ok(existsSync(join(book, ".codex", "rules", "weaver.rules")));
 
   weaver(["init", repairBook, "--id", "consumer-repair", "--title", "Consumer Repair", "--empty"]);
   writeFileSync(finishedSource, "# Wren\n\nA finished scene with an em — dash.\n\n* * *\n\nA second scene.");
@@ -106,6 +108,8 @@ try {
   const doctor = JSON.parse(weaver(["doctor", "--json", "--root", book]));
   assert.equal(doctor.checks.find((check) => check.id === "install-integrity").status, "pass");
   assert.equal(doctor.ok, true);
+  assert.equal(doctor.guardrails.claude.on, true);
+  assert.equal(doctor.guardrails.codex.on, true);
 
   studioChild = spawn(process.execPath, [join(consumer, "node_modules", "@pickbitsai", "weaver", "scripts", "weaver.mjs"), "studio", "--root", book, "--port", "0"], { cwd: consumer, env, stdio: ["ignore", "pipe", "pipe"] });
   const studioUrl = await new Promise((ready, reject) => {

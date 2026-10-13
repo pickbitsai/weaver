@@ -28,7 +28,7 @@ These are requirements, not suggestions:
    history and can be undone. `weaver init` sets this up for you.
 2. **Weaver is installed as a package, never copied into your book.** The AI
    that works on your book cannot change the tool.
-3. **You work with an AI that can run commands,** such as Claude Code. Chat
+3. **You work with an AI that can run commands,** such as Claude Code or local Codex. Chat
    windows that can't run Weaver aren't supported.
 4. **Your original files are never changed.** Import reads them; export writes
    new files.
@@ -41,23 +41,25 @@ book, and it tells you in plain words what to fix.
 The AI edits prose; the author decides. Author commands (`approve`, `reject`,
 `undo`, `rule`, `proposal`, `state:accept`, `release`, `import`, and `guard seal`) refuse in
 Claude Code and Codex shells. The author page still works when an AI launches it.
-Claude Code edit and shell hooks block protected settings and records, author
+Claude Code and Codex edit and shell hooks block protected settings and records, author
 commands, Git history/config writes, tool installation changes, and requests to
 the local author page. Ordinary prose edits, notes, checks, and reads stay available.
 
 `weaver init` and `weaver hooks install` install the hooks and permission rules.
-The rules use `Bash(npx weaver approve:*)` and the equivalent forms for every
+Claude's rules use `Bash(npx weaver approve:*)` and the equivalent forms for every
 author command (bare `weaver`, `npx`, `npx --no-install`, and `npx.cmd`).
 `Edit(/.claude/**)` and `Edit(/quality/**)` are anchored to the book's project
 settings, apply to all built-in edit tools, and leave reads available. These use
 the documented [Claude Code permission syntax](https://code.claude.com/docs/en/permissions).
 Pre-hooks return the documented [deny decision](https://code.claude.com/docs/en/hooks#pretooluse-decision-control).
-Permission bypass is disabled in the installed project settings.
+Claude permission bypass is disabled in the installed project settings.
+Codex uses project hooks and forbidden command-prefix rules; see [Hosts](#hosts)
+for the required one-time trust step.
 
 At hand-over, PickBits runs `weaver guard seal` from an author shell. It records
 CRLF-normalized SHA-256 fingerprints in `.weaver/guard.json` and commits that
 seal with an approval trailer. It covers both book Claude settings files
-(including an absent local file), `CLAUDE.md`, `AGENTS.md`, `project.json`, and
+(including an absent local file), `.codex/**`, `CLAUDE.md`, `AGENTS.md`, `project.json`, and
 every file under `quality/`. Rulings live separately in `continuity/rulings.json`
 and do not invalidate the seal. Intentional settings changes require review and
 resealing; sealing commits only the seal, leaving other pending work untouched.
@@ -271,7 +273,7 @@ style findings are listed by ID in `check` and `approve` output.
 
 ## Claude Code hooks
 
-Run `weaver hooks install --root ./my-book` to merge Weaver's PreToolUse and
+Run `weaver hooks install --host claude --root ./my-book` to merge Weaver's PreToolUse and
 PostToolUse hooks into `.claude/settings.json`. The pre-hook supplies the
 editorial rules and rule messages before scene edits, and the post-hook checks
 the edited scene and blocks only when a blocking rule fires. Hooks fail open on
@@ -327,7 +329,7 @@ npx weaver state:accept --through 3-2 --root ./my-book
 npx weaver facts build --root ./my-book
 ```
 
-For an interactive Claude Code session, print one packet and submit its answer:
+For an interactive Claude Code or Codex session, print one packet and submit its answer:
 
 ```bash
 npx weaver packet state --scene 1-1 --root ./my-book
@@ -340,11 +342,89 @@ quotes from elsewhere are rejected, including after the single repair round.
 `continuity/facts.json` is deterministic derived state: it keeps facts in scene
 order and records the first scene that establishes each normalized value.
 
-The host defaults to Claude Code (`claude -p --output-format text`) and can be
-set in `project.json` with `host.command`, `host.args`, `host.concurrency`, and
-`host.timeout_seconds`. Weaver removes `ANTHROPIC_API_KEY` from the child
-environment, so host runs use the user's Claude subscription rather than
-silently billing an API key. A missing host is a doctor warning, not a block.
+## Hosts
+
+Claude Code and Codex are supported for local book work, including local Codex
+sessions in the ChatGPT desktop app. The AI edits prose; the author approves,
+rejects, rules on findings, accepts story state, and releases the book.
+
+Claude Code remains the default (`claude -p --output-format text`). Choose
+Codex in `project.json`:
+
+```json
+{
+  "hosts": ["claude", "codex"],
+  "host": {
+    "kind": "codex",
+    "reasoning_effort": "medium",
+    "timeout_seconds": 600,
+    "concurrency": 2,
+    "args": []
+  }
+}
+```
+
+`hosts` lists the hosts the author uses; it defaults to both. Doctor blocks
+missing or inactive guards only for those hosts. `host.kind` selects the packet
+runner. Override it for one call with `--host claude` or `--host codex` on
+`run --book --run`, `review`, `repair`, or `state bootstrap`. The Jobs page has
+the same selector, initially set to the project choice. An override does not
+change the project file. When switching kinds, it uses that host's executable
+and arguments instead of carrying the other host's command across.
+
+`host.command` can select a custom executable. Claude's `args` replace its
+default arguments; Codex's `args` are extra `exec` options, such as
+`["--model", "a-model-you-can-use"]`. Codex receives the packet on stdin, runs
+read-only with `--ephemeral` and `--skip-git-repo-check`, and writes its final
+answer with `-o` into a temporary directory. Weaver consumes only that file,
+cleans it after the attempt, and uses the same validation, repair, and retry
+pipeline for either host. Reasoning effort defaults to `medium`; the chosen
+model must support the configured level.
+
+Weaver strips `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `CODEX_API_KEY` from host
+processes. Codex packet calls select the OpenAI provider and require ChatGPT
+login. Custom provider credential settings are outside this supported login
+path; do not configure API providers for Weaver packets.
+
+For a fresh machine:
+
+1. Install Node.js 22 or newer, Git, Weaver, and the host CLI(s) you use. Run
+   `claude` and finish sign-in for Claude Code. Run `codex login`, choose
+   ChatGPT, and verify with `codex login status` for Codex.
+2. Create the book with `weaver init <folder>`, which installs both sets of
+   guards. For an existing book, run `npx weaver hooks install --host both`
+   from its folder. Use `--host claude` or `--host codex` to repair just one.
+   The installer merges unrelated configuration and is safe to repeat.
+3. For Claude Code, open the book folder, accept its workspace trust prompt,
+   and restart an existing session so it loads `.claude/settings.json`.
+4. For Codex, open a **local** session in the book folder and trust the folder.
+   Type `/hooks`, review and trust each Weaver hook, then restart Codex to load
+   the project command rules. New or changed hook definitions require review
+   again. `AGENTS.md` is discovered automatically; Weaver leaves it unchanged.
+5. Run `npx weaver doctor`. On Windows, interactive writing needs a writable
+   workspace: use `codex --sandbox workspace-write` if doctor reports read-only
+   mode. Packet calls stay read-only. PickBits seals the installed book settings
+   at hand-over with `npx weaver guard seal` from the author's own terminal.
+
+Claude uses pre/post edit and shell hooks plus permission denials. Codex uses
+`.codex/hooks.json` and `.codex/rules/weaver.rules`. Its patch handler checks
+every file and move destination, reconstructs scene edits in memory, and uses
+the same blocking-rule regression comparison as Claude. Remaining blocking
+findings and advisory voice warnings are returned after editing. If a patch
+cannot be reconstructed, that rule check fails open; path guards still run.
+
+Codex 0.160.1 supports project command rules, so **no global installation is
+needed**. The optional `--user-rules` flag explicitly also installs the rules
+under `$CODEX_HOME/rules/weaver.rules` (normally `~/.codex/rules`). Those global
+rules affect other projects too. Normal installation never changes either
+host's global configuration or trusts hooks for you.
+
+These are pattern-based guardrails running as the same operating-system user,
+not an isolation boundary. Shell disguises, other tools, or direct changes can
+get around them. Doctor, the settings seal (including `.codex/**`), and approved
+history make covered changes visible. Codex's local hooks are not supported in
+Work Cloud with local computer access; use a local Codex session for this
+workflow. See [verified Codex CLI facts and limits](docs/codex-host.md).
 
 ## Your own checks
 
@@ -435,7 +515,7 @@ settings-seal checks.
 | `reject` | Save and restore one chapter's pending edits |
 | `undo` | Revert the most recent approval with a new Git commit |
 | `history` | Show approvals and undos (`--json` supported) |
-| `hooks install` | Install or merge Claude Code scene-edit hooks |
+| `hooks install` | Install or merge Claude Code and Codex guards (both by default) |
 | `state:status` | Show current and stale derived-state records |
 | `state bootstrap` | Build story-so-far packets, optionally run them through the host |
 | `state:accept` | Stamp reviewed narrative state through a scene |

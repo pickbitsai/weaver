@@ -47,7 +47,12 @@ function allowed(result, label = "") {
   assert.notEqual(result?.hookSpecificOutput?.permissionDecision, "deny", label);
   assert.notEqual(result?.decision, "block", label);
 }
-const shell = (root, command, options) => runHook("shell", { cwd: root, tool_name: "Bash", tool_input: { command } }, options);
+const shell = (root, command, options) => {
+  const result = runHook("shell", { cwd: root, tool_name: "Bash", tool_input: { command } }, options);
+  const codex = runHook("shell", { hook_event_name: "PreToolUse", session_id: "synthetic", turn_id: "turn", tool_use_id: "call", cwd: root, tool_name: "Bash", tool_input: { command } }, options);
+  assert.deepEqual(codex, result, `Codex and Claude shell decisions: ${command}`);
+  return result;
+};
 const edit = (root, path, tool_name = "Edit", options) => runHook("pre", { cwd: root, tool_name, tool_input: { [tool_name === "NotebookEdit" ? "notebook_path" : "file_path"]: path } }, options);
 function changeScene(root) {
   const path = join(root, SCENE);
@@ -121,7 +126,10 @@ test("all edit tools protect settings and records before scene setup is read", (
   const { root, base } = fixture(t);
   const paths = [".claude/settings.json", ".claude/settings.local.json", ".claude/rules/nested.md", "CLAUDE.md", "AGENTS.md", "project.json", "package.json", "package-lock.json", ".gitignore", ".git/config", "node_modules/weaver/engine.mjs", "quality/rules.json", "narrative-state/1-1.md", "continuity/rulings.json", ".weaver/guard.json", "releases/one/reader.md", "review/chapter-01-critic.json", "imports/book.json", "world-bible/characters.json", "approve.mjs", "notes/run.ps1", "tools\\go.cmd", "x.sh", "outline/../../outside.md", join(base, "outside.md")];
   for (const tool of ["Edit", "Write", "MultiEdit", "NotebookEdit"]) {
-    for (const path of paths) denied(edit(root, path, tool), `${tool}: ${path}`);
+    for (const path of paths) {
+      denied(edit(root, path, tool), `${tool}: ${path}`);
+      denied(runHook("pre", { cwd: root, tool_name: "apply_patch", tool_input: { command: `*** Begin Patch\n*** Update File: ${path}\n@@\n-old\n+new\n*** End Patch` } }), `Codex: ${path}`);
+    }
     for (const path of [SCENE, "world-bible/locations.md", "outline/plot-structure.md", "style-guide/voice.md", "notes.md"]) allowed(edit(root, path, tool), `${tool}: ${path}`);
   }
   denied(edit(root, join(root, "quality", "rules.json")));

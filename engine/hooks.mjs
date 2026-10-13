@@ -2,13 +2,15 @@
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { homedir } from "node:os";
+import { parseCodexPatch, applyCodexHunks } from "./codex-patch.mjs";
 import { countWords, loadScenes } from "./manuscript.mjs";
 import { readProject } from "./project.mjs";
 import { loadRules, runRules, runRulesForScene } from "./rules.mjs";
 import { blockingRuleRegression } from "./rule-regression.mjs";
 import { otherPendingChapters } from "./changes.mjs";
 import { runVoiceCheck } from "./voice.mjs";
-import { deny, editGuard, shellGuard, WEAVER_DENY_RULES } from "./guard.mjs";
+import { deny, editGuard, shellGuard, hookBookRoot, AUTHOR_ONLY_COMMANDS, GIT_WRITES, INSTALL_WRITES, WEAVER_DENY_RULES } from "./guard.mjs";
 
 const MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
 const SHELL_MATCHER = "Bash|PowerShell";
@@ -23,10 +25,10 @@ function hookEntry(matcher, command) {
 }
 
 function isWeaverEntry(entry, command, matcher) {
-  return entry?.matcher === matcher && Array.isArray(entry.hooks) && entry.hooks.some((hook) => hook?.type === "command" && hook.command === command);
+  return entry?.matcher === matcher && Array.isArray(entry.hooks) && entry.hooks.some((hook) => hook?.type === "command" && hook.command === command && hook.async !== true);
 }
 
-export function installHooks(root) {
+function installClaudeHooks(root) {
   const directory = join(root, ".claude");
   const path = join(directory, "settings.json");
   let settings = {};
@@ -65,11 +67,68 @@ export function installHooks(root) {
   return { path, changed, created: !existed };
 }
 
+export const CODEX_HOOK_COMMANDS = {
+  pre: `${PRE_COMMAND} --host codex`, post: `${POST_COMMAND} --host codex`,
+  shell: `${SHELL_COMMAND} --host codex`, matcher: "^apply_patch$", shellMatcher: "^Bash$"
+};
+
+export function codexRules() {
+  const patterns = AUTHOR_ONLY_COMMANDS.flatMap((command) => [
+    ["weaver"], ["weaver.cmd"], ["npx", "weaver"], ["npx", "--no-install", "weaver"],
+    ["npx.cmd", "weaver"], ["npx.cmd", "--no-install", "weaver"],
+    ["node_modules/.bin/weaver"], ["node_modules/.bin/weaver.cmd"],
+    ["node", "node_modules/@pickbitsai/weaver/scripts/weaver.mjs"]
+  ].map((prefix) => [...prefix, ...command.split(" ")]));
+  patterns.push([["git", "git.exe"], [...GIT_WRITES]], [["git", "git.exe"], "branch", ["-D", "-d", "-m", "-M", "--delete", "--move"]],
+    [["npm", "npm.cmd", "pnpm", "pnpm.cmd", "yarn", "yarn.cmd"], [...INSTALL_WRITES]]);
+  return `# Weaver author guardrails. Project-scoped; restart Codex after installation.\n${patterns.map((pattern) => `prefix_rule(pattern=${JSON.stringify(pattern)}, decision="forbidden", justification="Leave book decisions, history, settings and tool installation to the author; use the Weaver author page.")`).join("\n")}\n`;
+}
+
+function installCodexHooks(root, { userRules = false, codexHome = process.env.CODEX_HOME || join(homedir(), ".codex") } = {}) {
+  const path = join(root, ".codex", "hooks.json");
+  const existed = existsSync(path);
+  const settings = existed ? JSON.parse(readFileSync(path, "utf8")) : {};
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) throw new Error("invalid .codex/hooks.json: expected an object");
+  const next = structuredClone(settings);
+  next.hooks ||= {};
+  for (const [event, matcher, command] of [
+    ["PreToolUse", CODEX_HOOK_COMMANDS.matcher, CODEX_HOOK_COMMANDS.pre],
+    ["PostToolUse", CODEX_HOOK_COMMANDS.matcher, CODEX_HOOK_COMMANDS.post],
+    ["PreToolUse", CODEX_HOOK_COMMANDS.shellMatcher, CODEX_HOOK_COMMANDS.shell]
+  ]) {
+    next.hooks[event] ||= [];
+    if (!next.hooks[event].some((entry) => isWeaverEntry(entry, command, matcher))) next.hooks[event].push(hookEntry(matcher, command));
+  }
+  let changed = JSON.stringify(next) !== JSON.stringify(settings);
+  mkdirSync(join(root, ".codex", "rules"), { recursive: true });
+  if (changed || !existed) writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`);
+  for (const directory of [join(root, ".codex"), ...(userRules ? [codexHome] : [])]) {
+    const rulesPath = join(directory, "rules", "weaver.rules");
+    const existing = existsSync(rulesPath) ? readFileSync(rulesPath, "utf8") : "";
+    const missing = codexRules().split("\n").filter((line) => line && !existing.split(/\r?\n/u).includes(line));
+    if (missing.length) {
+      // Merge even when an author has put unrelated rules in our named file.
+      mkdirSync(join(directory, "rules"), { recursive: true });
+      writeFileSync(rulesPath, `${existing}${existing && !existing.endsWith("\n") ? "\n" : ""}${missing.join("\n")}\n`);
+      changed = true;
+    }
+  }
+  return { path, changed, created: !existed };
+}
+
+export function installHooks(root, { host = "both", ...options } = {}) {
+  if (!["claude", "codex", "both"].includes(host)) throw new Error("Choose claude, codex or both for hook installation.");
+  const results = [];
+  if (host !== "codex") results.push({ host: "claude", ...installClaudeHooks(root) });
+  if (host !== "claude") results.push({ host: "codex", ...installCodexHooks(root, options) });
+  return { path: results[0].path, changed: results.some((result) => result.changed), hosts: results };
+}
+
 function hookScene(payload) {
-  const cwd = resolve(payload?.cwd || process.cwd());
+  const cwd = hookBookRoot(payload);
   const filePath = payload?.tool_input?.file_path;
   if (typeof filePath !== "string" || !filePath) return null;
-  const absolute = resolve(cwd, filePath);
+  const absolute = resolve(payload?.cwd || cwd, filePath);
   const project = readProject(cwd);
   const sourceRoot = resolve(cwd, project.source_root);
   const relativePath = relative(sourceRoot, absolute).replaceAll("\\", "/");
@@ -142,23 +201,53 @@ function postHook(payload) {
   }
   const result = runRules(scene.cwd, scene.project, { sceneIds: [scene.sceneId] });
   const voices = runVoiceCheck(scene.cwd, scene.project, { sceneIds: [scene.sceneId] });
-  if (result.blocking) {
-    const blocking = result.findings.filter((finding) => finding.severity === "block").map(findingText).join("\n");
-    return { decision: "block", reason: `${blocking}\nfix these before continuing` };
-  }
-  if (result.warnings || voices.warnings) {
-    const warnings = [
+  const warnings = [
       ...result.findings.filter((finding) => finding.severity === "warn").map(findingText),
       ...voices.findings.map((finding) => `voice warning (paragraph ${finding.paragraph}, ${finding.speaker}): ${finding.reason}${finding.reasons?.length ? `\nReasons:\n${finding.reasons.map((reason) => `  - ${reason}`).join("\n")}` : ""}\nLine: ${finding.line}\nTypical lines:\n${finding.evidence.map((line) => `  - ${line.text} [${line.scene_id}, paragraph ${line.paragraph}]`).join("\n")}${finding.maybe_sounds_like ? `\nMaybe sounds like ${finding.maybe_sounds_like.character}:\n${finding.maybe_sounds_like.evidence.map((line) => `  - ${line.text} [${line.scene_id}, paragraph ${line.paragraph}]`).join("\n")}` : ""}`)
-    ].join("\n");
-    return { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: warnings } };
+  ].join("\n");
+  const context = warnings ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: warnings } } : {};
+  if (result.blocking) {
+    const blocking = result.findings.filter((finding) => finding.severity === "block").map(findingText).join("\n");
+    return { decision: "block", reason: `${blocking}\nfix these before continuing`, ...context };
   }
-  return null;
+  return warnings ? context : null;
+}
+
+function codexEditHook(kind, payload, decideEdit, compareRules) {
+  const files = parseCodexPatch(payload?.tool_input?.command);
+  if (kind === "pre") {
+    for (const file of files) {
+      const denial = decideEdit({ ...payload, tool_input: { file_path: file.path } });
+      if (denial) return denial;
+    }
+  }
+  const contexts = [], feedback = [];
+  for (const file of files) {
+    if (file.kind === "Move" || (kind === "post" && file.kind === "Delete")) continue;
+    const target = kind === "post" ? file.move || file.path : file.path;
+    const normalized = { ...payload, tool_name: "Write", tool_input: { file_path: target } };
+    let result;
+    if (kind === "pre") {
+      const path = resolve(payload?.cwd || process.cwd(), file.path);
+      let current = "";
+      try { current = readFileSync(path, "utf8"); } catch { if (file.kind !== "Add") continue; }
+      const content = applyCodexHunks(current, file);
+      if (content === null) continue;
+      normalized.tool_input.content = content;
+      result = preHook(normalized, () => null, compareRules);
+    } else result = postHook(normalized);
+    if (result?.hookSpecificOutput?.permissionDecision === "deny") return result;
+    if (result?.decision === "block") feedback.push(result.reason);
+    if (result?.hookSpecificOutput?.additionalContext) contexts.push(result.hookSpecificOutput.additionalContext);
+  }
+  if (feedback.length) return { decision: "block", reason: feedback.join("\n\n"), ...(contexts.length ? { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: contexts.join("\n\n") } } : {}) };
+  return contexts.length ? { hookSpecificOutput: { hookEventName: kind === "pre" ? "PreToolUse" : "PostToolUse", additionalContext: [...new Set(contexts)].join("\n\n") } } : null;
 }
 
 export function runHook(kind, payload, { decideEdit = editGuard, decideShell = shellGuard, compareRules = blockingRuleRegression } = {}) {
   try {
     if (kind === "shell") return decideShell(payload);
+    if (payload?.tool_name === "apply_patch" && ["pre", "post"].includes(kind)) return codexEditHook(kind, payload, decideEdit, compareRules);
     if (kind === "pre") return preHook(payload, decideEdit, compareRules);
     return kind === "post" ? postHook(payload) : null;
   } catch {

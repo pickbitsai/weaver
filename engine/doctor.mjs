@@ -7,7 +7,8 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compareIntegrity } from "./integrity.mjs";
 import { GENERATOR } from "./identity.mjs";
-import { WEAVER_HOOK_COMMANDS } from "./hooks.mjs";
+import { WEAVER_HOOK_COMMANDS, CODEX_HOOK_COMMANDS, codexRules } from "./hooks.mjs";
+import { probeCodex } from "./codex-status.mjs";
 import { hostAvailable } from "./host.mjs";
 import { reviewerWarnings } from "./reviewers.mjs";
 import { compareBookSettings, dirtyGuardedConfig, unapprovedHistory, WEAVER_DENY_RULES } from "./guard.mjs";
@@ -91,15 +92,15 @@ const FINDINGS = {
     id: "host",
     problem: "Use an AI that can run commands",
     title: "Command-running AI host",
-    why: "PickBits Weaver runs with an AI that can run commands, such as Claude Code. Chat-only AIs (web chat windows) are not supported.",
-    fix: "Use an AI that can run commands, such as Claude Code."
+    why: "PickBits Weaver runs with Claude Code or local Codex sessions that can run commands. Chat-only windows are not supported.",
+    fix: "Use Claude Code or a local Codex session."
   },
   hostAvailable: {
     id: "host-available",
     problem: "The configured command-line AI host is not available",
     title: "Command-line AI host is available",
     why: "Bootstrap needs the configured command-line AI host to answer work packets.",
-    fix: "install the command-line AI host (Claude Code) or set \"host\" in project.json."
+    fix: "Install the configured command-line AI host (Claude Code or Codex) or set host.kind in project.json."
   },
   hooksInstalled: {
     id: "hooks-installed",
@@ -110,9 +111,9 @@ const FINDINGS = {
   },
   hooksRunnable: {
     id: "hooks-runnable",
-    problem: "Weaver's Claude Code hooks cannot run from this book folder",
-    title: "Claude Code hooks can run",
-    why: "Claude Code runs the hooks from the book folder, so Weaver must be installed there.",
+    problem: "Weaver's hooks cannot run from this book folder",
+    title: "Weaver hooks can run",
+    why: "Both hosts run the hooks from the book folder, so Weaver must be available there.",
     fix: "Install Weaver in the book folder with npm."
   }
 };
@@ -173,10 +174,10 @@ function copiedWeaverEngine(bookRoot) {
 function hookEntryInstalled(entries, command, matcher = WEAVER_HOOK_COMMANDS.matcher) {
   return Array.isArray(entries) && entries.some((entry) => entry?.matcher === matcher
     && Array.isArray(entry.hooks)
-    && entry.hooks.some((hook) => hook?.type === "command" && hook.command === command));
+    && entry.hooks.some((hook) => hook?.type === "command" && hook.command === command && hook.async !== true));
 }
 
-function guardrailsInstalled(root, homeDirectory) {
+function claudeGuardProblems(root, homeDirectory) {
   const problems = [];
   let settings = {};
   for (const [path, label] of [[join(root, ".claude", "settings.json"), ".claude/settings.json"], [join(root, ".claude", "settings.local.json"), ".claude/settings.local.json"], [join(homeDirectory, ".claude", "settings.json"), "~/.claude/settings.json"]]) {
@@ -196,6 +197,23 @@ function guardrailsInstalled(root, homeDirectory) {
   return problems;
 }
 
+function codexGuardProblems(root) {
+  const problems = [];
+  try {
+    const settings = JSON.parse(readFileSync(join(root, ".codex", "hooks.json"), "utf8"));
+    for (const [event, command, matcher] of [
+      ["PreToolUse", CODEX_HOOK_COMMANDS.pre, CODEX_HOOK_COMMANDS.matcher],
+      ["PostToolUse", CODEX_HOOK_COMMANDS.post, CODEX_HOOK_COMMANDS.matcher],
+      ["PreToolUse", CODEX_HOOK_COMMANDS.shell, CODEX_HOOK_COMMANDS.shellMatcher]
+    ]) if (!hookEntryInstalled(settings.hooks?.[event], command, matcher)) problems.push(`the ${command.split(" ")[4]} hook is missing`);
+  } catch { problems.push(".codex/hooks.json is missing or cannot be read"); }
+  try {
+    const rules = readFileSync(join(root, ".codex", "rules", "weaver.rules"), "utf8");
+    if (!codexRules().split("\n").filter((line) => line.startsWith("prefix_rule")).every((line) => rules.includes(line))) problems.push("an author command rule is missing from .codex/rules/weaver.rules");
+  } catch { problems.push(".codex/rules/weaver.rules is missing or cannot be read"); }
+  return problems;
+}
+
 function hooksInstalled(bookRoot) {
   try {
     const settings = JSON.parse(readFileSync(join(bookRoot, ".claude", "settings.json"), "utf8"));
@@ -208,9 +226,25 @@ function hooksInstalled(bookRoot) {
 }
 
 function hooksRunnable(bookRoot) {
-  const executable = process.platform === "win32" ? "npx.cmd" : "npx";
-  const result = spawnSync(executable, ["--no-install", "weaver", "--version"], {
+  // npx can consult the package registry even with --no-install. Resolve the
+  // installed launcher first so doctor never needs package resolution.
+  let directory = resolve(bookRoot), executable;
+  while (true) {
+    const candidate = join(directory, "node_modules", ".bin", process.platform === "win32" ? "weaver.cmd" : "weaver");
+    if (existsSync(candidate)) { executable = candidate; break; }
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  if (!executable) {
+    const located = spawnSync(process.platform === "win32" ? "where.exe" : "which", ["weaver"], { encoding: "utf8", timeout: 2000, windowsHide: true });
+    if (located.status !== 0) return false;
+    executable = located.stdout.trim().split(/\r?\n/u)[0];
+  }
+  const result = spawnSync(process.platform === "win32" ? `"${executable}"` : executable, ["--version"], {
     cwd: bookRoot,
+    shell: process.platform === "win32",
+    windowsHide: true,
     encoding: "utf8",
     timeout: 15_000,
     stdio: ["ignore", "pipe", "pipe"]
@@ -218,11 +252,16 @@ function hooksRunnable(bookRoot) {
   return result.status === 0 && result.stdout.includes(GENERATOR);
 }
 
-export function runDoctor({ bookRoot, packageRoot = PACKAGE_ROOT, nodeVersion = process.versions.node, homeDirectory = homedir() } = {}) {
+export function runDoctor({ bookRoot, packageRoot = PACKAGE_ROOT, nodeVersion = process.versions.node, homeDirectory = homedir(),
+  codexHome = homeDirectory === homedir() ? process.env.CODEX_HOME || join(homeDirectory, ".codex") : join(homeDirectory, ".codex"),
+  codexStatus, platform = process.platform } = {}) {
   const root = resolve(bookRoot || process.cwd());
   const blocking = [];
   const warnings = [];
   const checks = [];
+  let project = {};
+  try { project = JSON.parse(readFileSync(join(root, "project.json"), "utf8")); } catch { /* Reported by project checks. */ }
+  const requiredHosts = project.hosts || ["claude", "codex"];
 
   const nodeOk = Number.parseInt(String(nodeVersion).split(".")[0], 10) >= 22;
   const nodeFinding = nodeOk ? [] : [finding(FINDINGS.node)];
@@ -262,8 +301,8 @@ export function runDoctor({ bookRoot, packageRoot = PACKAGE_ROOT, nodeVersion = 
 
   const installed = hooksInstalled(root);
   const hooksInstalledFinding = installed ? [] : [finding(FINDINGS.hooksInstalled)];
-  if (!installed) blocking.push(...hooksInstalledFinding);
-  checks.push(checkResult(FINDINGS.hooksInstalled.id, FINDINGS.hooksInstalled.title, installed ? "pass" : "blocking", hooksInstalledFinding));
+  if (!installed) (requiredHosts.includes("claude") ? blocking : warnings).push(...hooksInstalledFinding);
+  checks.push(checkResult(FINDINGS.hooksInstalled.id, FINDINGS.hooksInstalled.title, installed ? "pass" : requiredHosts.includes("claude") ? "blocking" : "warning", hooksInstalledFinding));
 
   const runnable = hooksRunnable(root);
   const hooksRunnableFinding = runnable ? [] : [finding(FINDINGS.hooksRunnable)];
@@ -274,21 +313,47 @@ export function runDoctor({ bookRoot, packageRoot = PACKAGE_ROOT, nodeVersion = 
   warnings.push(...hostFinding);
   checks.push(checkResult(FINDINGS.host.id, FINDINGS.host.title, "warning", hostFinding));
 
-  let project = {};
-  try { project = JSON.parse(readFileSync(join(root, "project.json"), "utf8")); } catch {
-    // The project check is reported elsewhere; a missing project cannot make this warning blocking.
-  }
   const addGuardCheck = (template, status, details = {}) => {
     const findings = status === "pass" ? [] : [finding(template, details)];
     if (status === "blocking") blocking.push(...findings);
     if (status === "warning") warnings.push(...findings);
     checks.push(checkResult(template.id, template.title, status, findings));
   };
-  const guardProblems = guardrailsInstalled(root, homeDirectory);
+  const codex = codexStatus ?? probeCodex(root, codexHome);
+  const guardrails = {
+    claude: { problems: claudeGuardProblems(root, homeDirectory) },
+    codex: { problems: codexGuardProblems(root) }
+  };
+  const codexInstalled = guardrails.codex.problems.length === 0;
+  const expectedHooks = [CODEX_HOOK_COMMANDS.pre, CODEX_HOOK_COMMANDS.post, CODEX_HOOK_COMMANDS.shell];
+  const liveHooks = codex.hooks?.hooks || [];
+  const trusted = expectedHooks.every((command) => liveHooks.some((hook) => hook.command === command
+    && resolve(hook.sourcePath || "") === join(root, ".codex", "hooks.json")
+    && hook.enabled && hook.async !== true && ["trusted", "managed"].includes(hook.trustStatus)));
+  if (codex.config?.hooksEnabled === false) guardrails.codex.problems.push("Codex has turned off hooks");
+  else if (codexInstalled && !trusted) guardrails.codex.problems.push(codex.available
+    ? "project hooks are not trusted or could not be verified; open /hooks in this book folder"
+    : "Codex is not installed, so hook trust cannot be checked");
+  const trustFix = "Open a local Codex session in the book folder, trust the folder when asked, then type /hooks and review and trust each Weaver hook. Restart Codex. Changed hooks need review again.";
+  addGuardCheck({ id: "codex-hook-trust", title: "Codex project hooks trusted", why: "Codex skips project hooks until the folder and the current hook definitions are trusted.", fix: trustFix },
+    codexInstalled && !trusted ? "warning" : "pass", { problem: "Codex project hooks are present but not trusted or their trust could not be checked" });
+  for (const [kind, item] of Object.entries(guardrails)) {
+    item.on = item.problems.length === 0;
+    item.required = requiredHosts.includes(kind);
+    item.label = `${kind === "claude" ? "Claude Code" : "Codex"} guardrails: ${item.on ? "on" : "off"}${item.problems.length ? ` (${item.problems[0]})` : ""}`;
+  }
+  const guardProblems = Object.values(guardrails).filter((item) => item.required).flatMap((item) => item.problems.length ? [item.label] : []);
   addGuardCheck(FINDINGS.guardrailsInstalled, guardProblems.length ? "blocking" : "pass", {
     problem: `${FINDINGS.guardrailsInstalled.problem}: ${guardProblems.join("; ")}`,
-    fix: guardProblems.some((problem) => problem.startsWith("~")) ? "Your user-level Claude settings disable or prevent the checks. Contact PickBits to restore them." : FINDINGS.guardrailsInstalled.fix
+    fix: guardrails.claude.problems.some((problem) => problem.startsWith("~")) ? "Your user-level Claude settings disable or prevent the checks. Contact PickBits to restore them."
+      : codexInstalled && !trusted && requiredHosts.includes("codex") ? trustFix : FINDINGS.guardrailsInstalled.fix
   });
+  const guardCheck = checks.at(-1);
+  guardCheck.hosts = guardrails;
+  guardCheck.title = Object.values(guardrails).map((item) => item.label).join("; ");
+  addGuardCheck({ id: "codex-available", title: "Codex installed and logged in", why: "Codex packet calls use the author's ChatGPT login.", fix: "Install Codex CLI, run `codex login`, choose ChatGPT, then run `codex login status`." },
+    codex.available && codex.loggedIn && codex.chatgpt ? "pass" : "warning", { problem: !codex.available ? "Codex is not installed or cannot start" : !codex.loggedIn ? "Codex is not logged in" : "Codex is using API credentials instead of ChatGPT" });
+  if (platform === "win32" && codex.config?.sandboxMode === "read-only") addGuardCheck({ id: "codex-windows-sandbox", title: "Codex can edit book prose on Windows", why: "The interactive read-only sandbox prevents file edits. Weaver packet calls deliberately remain read-only.", fix: "For interactive writing, start `codex --sandbox workspace-write` in the book folder (or select workspace-write in Codex permissions)." }, "warning", { problem: "Codex is configured read-only, so interactive prose edits are blocked" });
   try {
     const seal = compareBookSettings(root);
     addGuardCheck(seal.status === "warning" ? FINDINGS.settingsUnsealed : FINDINGS.settingsSealed, seal.status, seal.paths.length ? {
@@ -325,7 +390,7 @@ export function runDoctor({ bookRoot, packageRoot = PACKAGE_ROOT, nodeVersion = 
   }));
   warnings.push(...reviewerFindings);
   checks.push(checkResult("book-reviewers", "Book reviewer settings", reviewerFindings.length ? "warning" : "pass", reviewerFindings));
-  return { generator: GENERATOR, ok: blocking.length === 0, blocking, warnings, checks };
+  return { generator: GENERATOR, ok: blocking.length === 0, blocking, warnings, checks, guardrails };
 }
 
 export { FINDINGS, PACKAGE_ROOT };

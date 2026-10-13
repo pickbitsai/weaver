@@ -1,27 +1,48 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 import { spawn, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 export const DEFAULT_HOST = Object.freeze({
+  kind: "claude",
   command: "claude",
   args: ["-p", "--output-format", "text"],
   concurrency: 2,
   timeout_seconds: 600
 });
 
+export function withHost(project, kind) {
+  if (!kind) return project;
+  if (!["claude", "codex"].includes(kind)) throw new Error("Choose claude or codex for the AI host.");
+  const host = { ...project.host, kind };
+  if (kind !== (project.host?.kind || "claude")) {
+    delete host.command;
+    delete host.args;
+  }
+  return { ...project, host };
+}
+
 export function hostConfig(project = {}) {
   const configured = project.host || {};
+  const kind = configured.kind || "claude";
+  if (!["claude", "codex"].includes(kind)) throw new Error("Choose claude or codex for the AI host.");
   return {
-    command: configured.command || DEFAULT_HOST.command,
-    args: Array.isArray(configured.args) ? [...configured.args] : [...DEFAULT_HOST.args],
+    kind,
+    command: configured.command || kind,
+    args: Array.isArray(configured.args) ? [...configured.args] : kind === "codex" ? [] : [...DEFAULT_HOST.args],
+    reasoning_effort: configured.reasoning_effort || "medium",
     concurrency: configured.concurrency || DEFAULT_HOST.concurrency,
     timeout_seconds: configured.timeout_seconds || DEFAULT_HOST.timeout_seconds
   };
 }
 
-function safeEnvironment() {
+export function safeEnvironment() {
   const environment = { ...process.env };
-  delete environment.ANTHROPIC_API_KEY;
+  for (const name of Object.keys(environment)) {
+    if (["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY"].includes(name.toUpperCase())) delete environment[name];
+  }
   return environment;
 }
 
@@ -33,15 +54,26 @@ function executableForShell(command) {
 function runAttempt(config, promptText) {
   return new Promise((resolve) => {
     const started = Date.now();
+    const temporary = config.kind === "codex" ? mkdtempSync(join(tmpdir(), "weaver-codex-")) : null;
+    const output = temporary && join(temporary, "answer.txt");
+    const args = config.kind === "codex"
+      ? ["exec", ...config.args, "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",
+        "-c", `model_reasoning_effort=${config.reasoning_effort}`, "-c", "model_provider=openai",
+        "-c", "forced_login_method=chatgpt", "-o", output, "-"]
+      : config.args;
+    const cleanup = () => { if (temporary) rmSync(temporary, { recursive: true, force: true }); };
     let child;
     try {
-      child = spawn(executableForShell(config.command), config.args, {
+      child = spawn(executableForShell(config.command), process.platform === "win32" ? args.map((arg) => /[\s"&|<>^()]/u.test(arg) ? `"${arg.replaceAll('"', '\\"')}"` : arg) : args, {
         cwd: config.cwd,
         env: safeEnvironment(),
         shell: process.platform === "win32",
+        windowsHide: true,
+        detached: process.platform !== "win32",
         stdio: ["pipe", "pipe", "pipe"]
       });
     } catch (error) {
+      cleanup();
       resolve({ ok: false, text: "", seconds: (Date.now() - started) / 1000, error: `could not start host: ${error.message}` });
       return;
     }
@@ -54,6 +86,7 @@ function runAttempt(config, promptText) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      cleanup();
       resolve({ ...result, seconds: (Date.now() - started) / 1000 });
     };
     child.stdout.setEncoding("utf8");
@@ -68,19 +101,23 @@ function runAttempt(config, promptText) {
     });
     child.on("close", (code, signal) => {
       if (timedOut) return;
+      let answer = stdout;
+      if (output) {
+        try { answer = readFileSync(output, "utf8"); } catch { answer = ""; }
+      }
       if (code !== 0) {
         const detail = stderr.trim() ? `: ${stderr.trim().replace(/\s+/gu, " ").slice(0, 240)}` : "";
         finish({ ok: false, text: stdout, error: `host exited with ${signal ? `signal ${signal}` : `code ${code}`}${detail}` });
-      } else if (!stdout.trim()) {
-        finish({ ok: false, text: stdout, error: "host returned empty output" });
+      } else if (!answer.trim()) {
+        finish({ ok: false, text: "", error: "host returned empty output" });
       } else {
-        finish({ ok: true, text: stdout });
+        finish({ ok: true, text: answer });
       }
     });
     const timer = setTimeout(() => {
       timedOut = true;
       if (process.platform === "win32" && child.pid) spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
-      else child.kill();
+      else if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill(); } }
       finish({ ok: false, text: stdout, error: `host timed out after ${config.timeout_seconds} seconds` });
     }, config.timeout_seconds * 1000);
     try {

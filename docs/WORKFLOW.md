@@ -106,12 +106,15 @@ The reusable role prompt is in `prompts/architect.md`.
 
 ## 3. Draft
 
-Install the Claude Code hooks once for this book so style rules run around AI
+Install both hosts' guards once for this book so style rules run around AI
 prose edits:
 
 ```bash
-weaver hooks install --root ./my-book
+weaver hooks install --host both --root ./my-book
 ```
+
+For Codex, trust the book folder and review and trust Weaver's hooks with
+`/hooks`, then restart the local session. See [Hosts](../README.md#hosts).
 
 The pre-hook supplies the editorial rules before an edit. The post-hook checks
 the edited scene and reports or blocks deterministic findings. Hooks fail open,

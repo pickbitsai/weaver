@@ -77,10 +77,10 @@ test("hooks install merges unrelated settings and is idempotent", () => {
     const directory = dirname(settingsPath);
     mkdirSync(directory, { recursive: true });
     writeFileSync(settingsPath, JSON.stringify({ unrelated: true, hooks: { PreToolUse: [{ matcher: "Other", hooks: [{ type: "command", command: "other" }] }] } }));
-    assert.equal(cli(["hooks", "install"], root).status, 0);
+    assert.equal(cli(["hooks", "install", "--host", "both"], root).status, 0);
     const first = JSON.parse(readFileSync(settingsPath, "utf8"));
     assert.equal(first.unrelated, true);
-    assert.equal(cli(["hooks", "install"], root).status, 0);
+    assert.equal(cli(["hooks", "install", "--host", "both"], root).status, 0);
     const second = JSON.parse(readFileSync(settingsPath, "utf8"));
     assert.deepEqual(second, first);
     assert.equal(second.hooks.PreToolUse.filter((entry) => entry.hooks?.some((hook) => hook.command === "npx --no-install weaver hook pre")).length, 1);

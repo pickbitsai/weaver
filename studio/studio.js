@@ -11,6 +11,7 @@ async function refresh() {
 }
 async function post(route, data) {
   try {
+    if (route === "/api/jobs" && document.getElementById("job-host")) data.host = document.getElementById("job-host").value;
     const response = await fetch(route, { method: "POST", headers: { "Content-Type": "application/json", "X-Weaver-Studio": "1" }, body: JSON.stringify(data) });
     const result = await response.json();
     message.textContent = result.error || result.message || "The action finished.";

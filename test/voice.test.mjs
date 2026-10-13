@@ -148,6 +148,9 @@ test("profiles and checks are deterministic, evidentiary, stale-aware, and advis
     const hookOutput = JSON.parse(hook.stdout);
     assert.equal(hookOutput.decision, undefined);
     assert.match(hookOutput.hookSpecificOutput.additionalContext, /Typical lines/);
+    const codexHook = runHook("post", { cwd: root, hook_event_name: "PostToolUse", tool_name: "apply_patch",
+      tool_input: { command: `*** Begin Patch\n*** Update File: ${path}\n@@\n-old\n+new\n*** End Patch` }, tool_response: "Success" });
+    assert.deepEqual(codexHook, hookOutput, "Codex must deliver the same evidenced voice warnings");
 
     const voiceId = result.findings.find((finding) => finding.speaker === "Brask").id;
     const ruling = spawnSync(process.execPath, [CLI, "rule", voiceId, "--decision", "allow", "--root", root], { env: authorEnv(), cwd: ROOT, encoding: "utf8" });

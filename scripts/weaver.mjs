@@ -25,6 +25,7 @@ import { startStudio } from "../engine/studio.mjs";
 import { authorCommandRefusal, sealBookSettings } from "../engine/guard.mjs";
 import { acceptProposal, rejectProposal, listProposals, repairChapter, submitRepairPacket, proposalSummary } from "../engine/repair.mjs";
 import { runBook } from "../engine/run.mjs";
+import { withHost } from "../engine/host.mjs";
 
 const argv = process.argv.slice(2);
 const command = argv.shift() || "help";
@@ -47,7 +48,7 @@ function positional(index = 0) {
 
 function projectContext() {
   const root = resolve(option("--root", process.cwd()));
-  return { root, project: readProject(root) };
+  return { root, project: withHost(readProject(root), option("--host")) };
 }
 
 function print(value) {
@@ -272,8 +273,9 @@ try {
   } else if (command === "hooks" && positional() === "install") {
     if (refuseIfDoctorBlocks(root, command, { allowHookInstall: true })) process.exitCode = 1;
     else {
-      const result = installHooks(root);
-      print(`${result.changed ? (result.created ? "Created" : "Updated") : "Already installed"} ${result.path}`);
+      const result = installHooks(root, { host: option("--host", "both"), userRules: argv.includes("--user-rules") });
+      for (const item of result.hosts) print(`${item.changed ? (item.created ? "Created" : "Updated") : "Already installed"} ${item.path}`);
+      if (result.hosts.some((item) => item.host === "codex")) print("In Codex, trust this book folder, then open /hooks and review and trust the Weaver hooks. Restart Codex to load the command rules.");
     }
   } else if (command === "guard" && positional() === "seal") {
     if (refuseIfDoctorBlocks(root, authorCommand, { allowSeal: true })) process.exitCode = 1;
@@ -537,7 +539,8 @@ Usage:
   weaver reject [--chapter number] [--root directory]
   weaver undo [--root directory]
   weaver history [--root directory] [--json]
-  weaver hooks install [--root directory]
+  # Packet commands accept --host claude|codex (run, review, repair, state bootstrap).
+  weaver hooks install [--host claude|codex|both] [--user-rules] [--root directory]
   weaver guard seal [--root directory] [--json]
   weaver state:status [--root directory]
   weaver state bootstrap [--through scene-id] [--run] [--root directory]
@@ -575,7 +578,8 @@ Usage:
   weaver reject [--chapter number] [--root directory]
   weaver undo [--root directory]
   weaver history [--root directory] [--json]
-  weaver hooks install [--root directory]
+  # Packet commands accept --host claude|codex (run, review, repair, state bootstrap).
+  weaver hooks install [--host claude|codex|both] [--user-rules] [--root directory]
   weaver guard seal [--root directory] [--json]
   weaver state:status [--root directory]
   weaver state bootstrap [--through scene-id] [--run] [--root directory]

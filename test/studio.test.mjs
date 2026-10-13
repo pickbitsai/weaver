@@ -51,6 +51,30 @@ async function studio(root) {
 
 function close(server) { return new Promise((ready) => server.close(ready)); }
 
+test("Jobs host selector defaults to the project and passes Codex to the job", async () => {
+  const root = book();
+  const project = readProject(root);
+  project.host = { kind: "codex", args: ["--fixture", "basic", "--fake-mode", "review-triage"], timeout_seconds: 10 };
+  writeFileSync(join(root, "project.json"), JSON.stringify(project));
+  const app = await studio(root);
+  try {
+    const html = await (await app.get("/jobs")).text();
+    assert.match(html, /id="job-host"/u);
+    assert.match(html, /value="codex" selected/u);
+    assert.equal((await app.post("/api/jobs", { kind: "review", chapter: 1, host: "invalid" })).status, 400);
+    assert.equal((await app.post("/api/jobs", { kind: "review", chapter: 1, host: "codex" })).status, 202);
+    let job;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      job = await (await app.get("/api/jobs/current")).json();
+      if (job.state !== "running") break;
+      await new Promise((ready) => setTimeout(ready, 100));
+    }
+    assert.equal(job.host, "codex");
+    assert.equal(job.state, "done", JSON.stringify(job));
+    assert.ok(existsSync(join(root, ".weaver/codex-call.json")));
+  } finally { await close(app.server); rmSync(root, { recursive: true, force: true }); }
+});
+
 test("health, local binding, page routes, traversal, and POST protection", async () => {
   const root = book();
   const app = await studio(root);
@@ -64,6 +88,8 @@ test("health, local binding, page routes, traversal, and POST protection", async
       const html = await response.text();
       assert.match(html, /Supported setup: yes/u);
       assert.match(html, /Guardrails: on/u);
+      assert.match(html, /Claude Code guardrails: on/u);
+      assert.match(html, /Codex guardrails: on/u);
       assert.match(html, /Settings not sealed yet/u);
       assert.match(html, /Weaver install unchanged: yes/u);
       assert.doesNotMatch(html, new RegExp(root.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));

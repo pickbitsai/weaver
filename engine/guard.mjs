@@ -13,14 +13,14 @@ import { GENERATOR } from "./identity.mjs";
 export const AI_HOST_ENV = ["CLAUDECODE", "CODEX_CI", "CODEX_SESSION_ID", "CODEX_THREAD_ID"];
 export const AUTHOR_ONLY_COMMANDS = ["approve", "reject", "undo", "rule", "proposal", "state:accept", "release", "import", "guard seal"];
 export const PROTECTED_PATHS = [
-  ".claude/**", "CLAUDE.md", "AGENTS.md", "project.json", "package.json", "package-lock.json",
+  ".claude/**", ".codex/**", "CLAUDE.md", "AGENTS.md", "project.json", "package.json", "package-lock.json",
   ".gitignore", ".git/**", "node_modules/**", "quality/**", "narrative-state/**", "continuity/**",
   ".weaver/**", "releases/**", "review/**", "imports/**", "world-bible/characters.json"
 ];
 // A book holds prose and notes. A script written into it could run author commands with the
 // host markers stripped, so the AI may not create or edit code files anywhere in the book.
 const CODE_FILE = /\.(?:m?js|cjs|ts|mts|cts|ps1|psm1|bat|cmd|sh|py|vbs|exe)$/iu;
-export const SEALED_CONFIG_PATHS = [".claude/settings.json", ".claude/settings.local.json", "CLAUDE.md", "AGENTS.md", "project.json", "quality/**"];
+export const SEALED_CONFIG_PATHS = [".claude/settings.json", ".claude/settings.local.json", ".codex/**", "CLAUDE.md", "AGENTS.md", "project.json", "quality/**"];
 export const GUARD_CHECK_IDS = ["guardrails-installed", "book-settings-sealed", "approved-history", "protected-files-clean"];
 export const WEAVER_DENY_RULES = [
   ...AUTHOR_ONLY_COMMANDS.flatMap((command) => ["weaver", "npx weaver", "npx --no-install weaver", "npx.cmd weaver"]
@@ -86,8 +86,8 @@ export function editGuard(payload) {
   return null;
 }
 
-const GIT_WRITES = new Set("commit reset revert rebase restore checkout switch merge cherry-pick stash push pull am apply filter-branch filter-repo update-ref config tag clean gc reflog notes replace".split(" "));
-const INSTALL_WRITES = new Set("install i add uninstall remove update upgrade ci link rebuild".split(" "));
+export const GIT_WRITES = new Set("commit reset revert rebase restore checkout switch merge cherry-pick stash push pull am apply filter-branch filter-repo update-ref config tag clean gc reflog notes replace".split(" "));
+export const INSTALL_WRITES = new Set("install i add uninstall remove update upgrade ci link rebuild".split(" "));
 const READS = new Set("cat type get-content gc head tail less more grep rg select-string sls findstr wc ls dir get-childitem gci test-path stat".split(" "));
 const executable = (token) => token.replaceAll("\\", "/").split("/").at(-1).replace(/\.(?:exe|cmd)$/iu, "").toLowerCase();
 const shellWords = (text) => [...text.matchAll(/"([^"]*)"|'([^']*)'|([^\s<>(),{};&|]+)/gu)].map((match) => match[1] ?? match[2] ?? match[3]);
