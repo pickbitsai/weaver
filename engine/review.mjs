@@ -11,6 +11,7 @@ import { buildPacket, extractJsonBlock, validateAndRepair } from "./packets.mjs"
 import { readerText } from "./prose.mjs";
 import { factsLedgerPath, statePath } from "./state.mjs";
 import { listLenses } from "./reviewers.mjs";
+import { writeRecord } from "./records.mjs";
 export { listLenses } from "./reviewers.mjs";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -64,7 +65,7 @@ function markdownContext(root, folder, { recursive = false, excludeStarters = fa
   return lines.join("\n\n");
 }
 
-function worldBible(root) {
+export function worldBible(root) {
   return markdownContext(root, "world-bible", { excludeStarters: true }) || "_No project world-bible notes._";
 }
 
@@ -166,11 +167,12 @@ export function validateReviewAnswer(text, lens, paragraphs, root = PACKAGE_ROOT
   return { ok: checked.errors.length === 0, value: { verdict: parsed.document.verdict, findings: checked.findings, dropped_findings: checked.dropped }, errors: checked.errors };
 }
 
-async function recordAnswer(root, project, chapter, lens, packet, inputs, text) {
+async function recordAnswer(root, project, chapter, lens, packet, inputs, text, options = {}) {
   const paragraphs = inputs.chapterScenes.flatMap(reviewParagraphs);
   const definition = lensDefinition(root, lens);
   const validator = (answer) => validateReviewAnswer(answer, definition, paragraphs);
-  const result = await validateAndRepair(root, project, packet, text, validator);
+  const result = await validateAndRepair(root, project, packet, text, validator, options);
+  if (result.host_error) return { ok: false, errors: [result.host_error] };
   let value = result.value;
   if (!result.ok) {
     const parsed = parsedAnswer(result.answerText, definition);
@@ -185,7 +187,7 @@ async function recordAnswer(root, project, chapter, lens, packet, inputs, text) 
     packet_id: packet.id, generator: GENERATOR
   };
   mkdirSync(join(root, "review"), { recursive: true });
-  writeFileSync(reviewRecordPath(root, chapter, lens), `${JSON.stringify(record, null, 2)}\n`);
+  writeRecord(reviewRecordPath(root, chapter, lens), record);
   return { ok: true, record };
 }
 
@@ -215,11 +217,11 @@ export async function runReview(root, project, { chapter, lenses, run = false, o
   }
 }
 
-export async function submitReviewPacket(root, project, packet, answerText) {
+export async function submitReviewPacket(root, project, packet, answerText, options = {}) {
   const [chapterText, lens] = String(packet.target).split(":");
   const chapter = Number(chapterText);
   const inputs = reviewInputs(root, project, chapter);
   const current = buildReviewPacket(root, project, chapter, lens, inputs);
   if (current.id !== packet.id) return { ok: false, errors: ["packet is stale because its review inputs changed"] };
-  return recordAnswer(root, project, chapter, lens, packet, inputs, answerText);
+  return recordAnswer(root, project, chapter, lens, packet, inputs, answerText, options);
 }

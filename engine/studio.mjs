@@ -13,11 +13,13 @@ import { collectFindings } from "./findings.mjs";
 import { GENERATOR } from "./identity.mjs";
 import { loadScenes } from "./manuscript.mjs";
 import { readProject } from "./project.mjs";
-import { parseEscapedProse, readerText } from "./prose.mjs";
+import { parseEscapedProse } from "./prose.mjs";
 import { readRulings, saveRuling } from "./rulings.mjs";
 import { acceptNarrativeState, narrativeStateStatus, readFactsLedger, statePath } from "./state.mjs";
 import { attributeDialogue } from "./voice.mjs";
 import { loadRules, ruleScopeDescription } from "./rules.mjs";
+import { acceptProposal, listProposals, rejectProposal } from "./repair.mjs";
+import { latestBookRun } from "./run.mjs";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(PACKAGE_ROOT, "scripts", "weaver.mjs");
@@ -25,7 +27,7 @@ const ASSETS = new Map([
   ["/studio.css", ["text/css; charset=utf-8", readFileSync(join(PACKAGE_ROOT, "studio", "studio.css"))]],
   ["/studio.js", ["text/javascript; charset=utf-8", readFileSync(join(PACKAGE_ROOT, "studio", "studio.js"))]]
 ]);
-const NAV = [["/", "Home"], ["/book", "Book"], ["/characters", "Characters"], ["/places", "Places"], ["/threads", "Threads"], ["/findings", "Findings"], ["/rules", "Rules"], ["/changes", "Changes"], ["/history", "History"], ["/jobs", "Jobs"]];
+const NAV = [["/", "Home"], ["/book", "Book"], ["/characters", "Characters"], ["/places", "Places"], ["/threads", "Threads"], ["/findings", "Findings"], ["/proposals", "Proposals"], ["/rules", "Rules"], ["/changes", "Changes"], ["/history", "History"], ["/jobs", "Jobs"]];
 const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 const chapterSlug = (number) => `chapter-${String(number).padStart(2, "0")}`;
 const sceneSlug = (number) => `scene-${String(number).padStart(2, "0")}`;
@@ -46,7 +48,7 @@ export function approvalProgress(root, scenes) {
   subjects.forEach((subject, index) => { if (/^(?:Import original manuscript|Initialize book)/u.test(subject)) baseline = index; });
   const approved = new Set();
   for (const subject of subjects.slice(baseline + 1)) {
-    const match = /^Approve chapter (\d+)(?::|$)/u.exec(subject);
+    const match = /^(?:Approve chapter |Repairs accepted, chapter )(\d+)(?::| |$)/u.exec(subject);
     if (match) approved.add(Number(match[1]));
   }
   return { approved, total: new Set(scenes.map((scene) => scene.chapter)).size };
@@ -133,13 +135,18 @@ function findingCard(item, { note = false } = {}) {
   return `<article class="card" id="finding-${esc(item.id)}"><h4>${note ? "Note " : ""}${esc(item.id)} <span class="chip">${esc(item.reviewer_title || item.source)}</span></h4><p><a href="/book/${chapterSlug(Number(item.scene_id.split("-")[0]))}/${sceneSlug(Number(item.scene_id.split("-")[1]))}#p${esc(item.paragraph)}">Scene ${esc(item.scene_id)}, ¶${esc(item.paragraph)}</a></p><blockquote>${esc(quote)}</blockquote><p>${esc(item.issue)}</p><p><strong>Suggested repair:</strong> ${esc(item.repair)}</p>${item.ruling ? `<p class="notice">${esc(item.ruling)}</p>` : ""}${note ? "" : `<div class="actions"><button data-action="ruling" data-id="${esc(item.id)}" data-decision="fix">Fix this</button><button data-action="ruling" data-id="${esc(item.id)}" data-decision="intended">It's intended</button><button data-action="ruling" data-id="${esc(item.id)}" data-decision="allow">Allow</button></div>`}</article>`;
 }
 
-function diffWords(before, after) {
-  const a = readerText(before).split(/(\s+)/u), b = readerText(after).split(/(\s+)/u);
-  let start = 0, end = 0;
-  while (start < a.length && start < b.length && a[start] === b[start]) start++;
-  while (end < a.length - start && end < b.length - start && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
-  const prefix = esc(a.slice(0, start).join("")), suffix = esc(end ? a.slice(-end).join("") : "");
-  return { before: `${prefix}<del>${esc(a.slice(start, a.length - end).join(""))}</del>${suffix}`, after: `${prefix}<ins>${esc(b.slice(start, b.length - end).join(""))}</ins>${suffix}` };
+export function diffWords(before, after) {
+  const a = before.match(/\s+|[^\s]+/gu) || [], b = after.match(/\s+|[^\s]+/gu) || [];
+  const lengths = Array.from({ length: a.length + 1 }, () => new Uint32Array(b.length + 1));
+  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) lengths[i][j] = a[i] === b[j] ? lengths[i + 1][j + 1] + 1 : Math.max(lengths[i + 1][j], lengths[i][j + 1]);
+  const left = [], right = [];
+  let i = 0, j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) { left.push(esc(a[i])); right.push(esc(b[j])); i++; j++; }
+    else if (i < a.length && (j === b.length || lengths[i + 1][j] >= lengths[i][j + 1])) left.push(`<del>${esc(a[i++])}</del>`);
+    else right.push(`<ins>${esc(b[j++])}</ins>`);
+  }
+  return { before: left.join(""), after: right.join("") };
 }
 
 function changedParagraphs(scene, styleFindings) {
@@ -163,7 +170,7 @@ function pageBody(path, root, project, job) {
   if (path === "/rules") return `<h1>Rules</h1>${loadRules(root).rules.map((rule) => `<article class="card"><h2>${esc(rule.id)}</h2><p>${esc(rule.message)}</p><p>${esc(rule.severity)} · ${esc(rule.type)}</p><p>${esc(ruleScopeDescription(rule, characters))}</p></article>`).join("") || "<p>No rules configured.</p>"}`;
   if (path === "/") {
     const toFix = findings.findings.filter((item) => item.ruling === "author wants this fixed").length;
-    return `<h1>${esc(project.title)}</h1><p class="byline">${esc(project.author || "Author not listed")}</p><h2>Progress</h2><p>${progress.approved.size} of ${progress.total} chapters approved since import</p><p>Open findings: ${findings.findings.length - toFix} to decide, ${toFix} to fix</p><p><a href="/book">Read the book</a> · <a href="/changes">Review changes</a></p>`;
+    return `<h1>${esc(project.title)}</h1><p class="byline">${esc(project.author || "Author not listed")}</p><h2>Progress</h2><p>${progress.approved.size} of ${progress.total} chapters approved since import ? <a href="/proposals">${listProposals(root, project, { scenes, collected: findings }).filter((item) => item.status === "ready").length} proposals waiting</a></p><p>Open findings: ${findings.findings.length - toFix} to decide, ${toFix} to fix</p><p><a href="/book">Read the book</a> · <a href="/changes">Review changes</a></p>`;
   }
   if (path === "/book") return `<h1>Book</h1>${chapterNumbers.map((number) => `<section><h2><a href="${chapterHref(number)}">Chapter ${number}${project.chapters?.[number] ? `: ${esc(project.chapters[number])}` : ""}</a></h2><p>${statusChips(number, pending, findings, progress.approved)}</p>${list(scenes.filter((scene) => scene.chapter === number).map((scene) => `<a href="${sceneHref(scene)}">Scene ${scene.scene}</a>`))}</section>`).join("")}`;
   const sceneRoute = /^\/book\/chapter-(\d+)\/scene-(\d+)$/u.exec(path);
@@ -202,6 +209,13 @@ function pageBody(path, root, project, job) {
   }
   if (path === "/threads") return `<h1>Threads</h1>${[...threadGroups(root, project, scenes)].map(([slug, thread]) => `<section id="${esc(slug)}"><h2>${esc(thread.value)}</h2>${list(thread.entries.map(({ scene, status }) => `${esc(status)} in <a href="${sceneHref(scene)}">scene ${esc(scene.id)}</a>`))}</section>`).join("") || "<p>No active threads recorded yet.</p>"}`;
   if (path === "/findings") return `<h1>Findings</h1>${findings.chapters.map((chapter) => `<section><h2>Chapter ${chapter.chapter}</h2>${chapter.stale_reviews.length ? `<p class="notice">${chapter.stale_reviews.map(esc).join(", ")} review out of date</p>` : ""}${[["Mechanical: style rules", chapter.findings.filter((item) => item.kind === "rule")], ["Voice", chapter.findings.filter((item) => item.kind === "voice")], ["Judgment: triaged", chapter.findings.filter((item) => item.kind === "judgment")]].map(([heading, items]) => `<h3>${heading}</h3>${items.length ? items.map((item) => findingCard(item)).join("") : "<p>None.</p>"}`).join("")}<details><summary>Show notes (${chapter.note_count})</summary>${chapter.notes.map((item) => findingCard(item, { note: true })).join("") || "<p>No notes.</p>"}</details></section>`).join("")}`;
+  if (path === "/proposals") {
+    const proposals = listProposals(root, project, { scenes, collected: findings });
+    return `<h1>Proposals</h1><p>Read each repair and choose which edits to accept.</p><p data-poll="${job?.state === "running" ? "1" : "0"}">${job?.state === "running" ? "A job is running. See Jobs for progress." : ""}</p>${proposals.map((proposal) => `<section id="proposal-${proposal.chapter}"><h2>Chapter ${proposal.chapter} ? ${esc(proposal.status)}</h2>${proposal.status === "no-usable-edits" ? "<p>No usable edits. Read the drop reasons below, then Ask again.</p>" : ""}${proposal.error ? `<p>${esc(proposal.error)}</p>` : ""}${proposal.edits.map((edit) => {
+      const diff = diffWords(edit.before, edit.after);
+      return `<article class="card"><label><input type="checkbox" data-proposal="${proposal.chapter}" value="${edit.number}" ${proposal.status === "ready" ? "checked" : "disabled"}> Edit ${edit.number}: Scene ${esc(edit.scene_id)}, paragraph ${edit.paragraph}</label><div class="columns"><div><strong>Before</strong><p>${diff.before}</p></div><div><strong>After</strong><p>${diff.after}</p></div></div><p>${esc(edit.reason)}</p><p>Word delta: ${edit.word_delta > 0 ? "+" : ""}${edit.word_delta} ? ${esc(edit.validation)}</p><p>Findings: ${edit.finding_ids.map((id) => { const finding = proposal.findings.find((item) => item.id === id); return `${esc(id)} (${esc(finding?.source)}): ${esc(finding?.issue)}`; }).join("; ")}</p><p>Confirmed fixed: ${edit.findings_fixed.map(esc).join(", ") || "none"}${edit.findings_proposed?.length ? ` ? Judgment repairs proposed: ${edit.findings_proposed.map(esc).join(", ")}` : ""}</p></article>`;
+    }).join("")}<h3>Declined findings</h3>${list(proposal.declined.map((item) => `${esc(item.finding_id)}: the AI made no edit, because ${esc(item.reason)}`))}<h3>Dropped edits</h3>${list(proposal.dropped_edits.map((item) => `Edit ${item.number}, ${esc(item.scene_id)} paragraph ${item.paragraph}: ${esc(item.why)}`))}${proposal.status !== "accepted" ? `<label for="proposal-note-${proposal.chapter}">Author note (optional)</label><input id="proposal-note-${proposal.chapter}" maxlength="1000"><div class="actions"><button data-action="proposal-accept" data-chapter="${proposal.chapter}" ${proposal.status !== "ready" || !proposal.edits.length ? "disabled" : ""}>Accept selected</button><button data-action="proposal-reject" data-chapter="${proposal.chapter}">Reject</button><button data-action="proposal-again" data-chapter="${proposal.chapter}">Ask again</button></div>` : ""}</section>`).join("") || "<p>No proposals yet. Use Check whole book on Jobs.</p>"}`;
+  }
   if (path === "/changes") {
     const raw = pendingChanges(root, project);
     return `<h1>Changes waiting</h1>${pending.chapters.length ? pending.chapters.map((chapter) => `<section><h2>Chapter ${chapter.chapter}</h2><p>${chapter.scenes_changed} scenes changed · ${chapter.blocking} blocking style findings · ${chapter.warnings} warnings</p>${raw.chapters.find((item) => item.chapter === chapter.chapter).scenes.map((scene) => changedParagraphs(scene, chapter.scenes.find((item) => item.id === scene.id)?.findings || [])).join("")}<label for="note-${chapter.chapter}">Approval note (optional)</label><input id="note-${chapter.chapter}" maxlength="200"><div class="actions"><button data-action="approve" data-chapter="${chapter.chapter}" data-note="note-${chapter.chapter}">Approve chapter ${chapter.chapter}</button><button data-action="reject" data-chapter="${chapter.chapter}">Reject chapter ${chapter.chapter}</button></div></section>`).join("") : "<p>No changes are waiting.</p>"}`;
@@ -214,7 +228,7 @@ function pageBody(path, root, project, job) {
   }
   if (path === "/jobs") {
     const state = narrativeStateStatus(root, project);
-    return `<h1>Jobs</h1><p>Run a chapter review or build story-so-far state through the configured AI host.</p><label for="review-chapter">Chapter</label><select id="review-chapter">${chapterNumbers.map((number) => `<option value="${number}">${number}</option>`).join("")}</select><div class="actions"><button data-action="review-job">Run review</button><button data-action="bootstrap-job">Bootstrap state</button></div><section id="job-status" data-poll="${job?.state === "running" ? "1" : "0"}"><h2>Current job</h2>${job ? `<p>${esc(job.kind)} · ${esc(job.state)} · started ${esc(job.started_at)}</p><pre>${esc(job.log_tail.join("\n"))}</pre>` : "<p>No job has started.</p>"}</section><section><h2>Story state to review</h2><p>${state.current} current, ${state.stale} waiting for acceptance or refresh.</p>${scenes.map((scene) => { const record = state.records.find((item) => item.scene === scene.id); const file = statePath(root, project, scene.id); return `<details><summary>Scene ${esc(scene.id)} · ${record?.current ? "current" : esc(record?.reason || "missing")}</summary>${existsSync(file) ? `<pre>${esc(readFileSync(file, "utf8"))}</pre>` : "<p>No story-state record yet.</p>"}</details>`; }).join("")}<p>After reading the records, accept the story state explicitly. An edited scene makes it and all later scenes stale again.</p><button data-action="accept-state">Accept story state</button></section>`;
+    return `<h1>Jobs</h1><p>Run a chapter review or build story-so-far state through the configured AI host.</p><label for="review-chapter">Chapter</label><select id="review-chapter">${chapterNumbers.map((number) => `<option value="${number}">${number}</option>`).join("")}</select><div class="actions"><button data-action="review-job">Run review</button><button data-action="bootstrap-job">Bootstrap state</button><button data-action="book-job">Check whole book</button></div><section id="job-status" data-poll="${job?.state === "running" ? "1" : "0"}"><h2>Current job</h2>${job ? `<p>${esc(job.kind)} · ${esc(job.state)} · started ${esc(job.started_at)}</p><pre>${esc([...(job.kind === "book" ? (latestBookRun(root)?.units || []).map((unit) => `${unit.unit}: ${unit.status}, ${unit.attempts} attempts`) : []), ...job.log_tail].join("\n"))}</pre>` : "<p>No job has started.</p>"}</section><section><h2>Story state to review</h2><p>${state.current} current, ${state.stale} waiting for acceptance or refresh.</p>${scenes.map((scene) => { const record = state.records.find((item) => item.scene === scene.id); const file = statePath(root, project, scene.id); return `<details><summary>Scene ${esc(scene.id)} · ${record?.current ? "current" : esc(record?.reason || "missing")}</summary>${existsSync(file) ? `<pre>${esc(readFileSync(file, "utf8"))}</pre>` : "<p>No story-state record yet.</p>"}</details>`; }).join("")}<p>After reading the records, accept the story state explicitly. An edited scene makes it and all later scenes stale again.</p><button data-action="accept-state">Accept story state</button></section>`;
   }
   return null;
 }
@@ -267,20 +281,27 @@ export async function startStudio({ root = process.cwd(), port = null } = {}) {
     try { path = new URL(raw, `http://127.0.0.1:${boundPort}`).pathname; } catch { send(response, 404, "text/plain; charset=utf-8", "Page not found."); return; }
     if (request.method === "GET") {
       if (path === "/api/health") { json(response, 200, { service: "pickbits-weaver-studio", generator: GENERATOR, book: project.project_id }); return; }
-      if (path === "/api/jobs/current") { json(response, 200, currentJob ? { kind: currentJob.kind, started_at: currentJob.started_at, state: currentJob.state, log_tail: currentJob.log_tail.slice(-40) } : { kind: null, started_at: null, state: null, log_tail: [] }); return; }
+      if (path === "/api/jobs/current") { json(response, 200, currentJob ? { kind: currentJob.kind, started_at: currentJob.started_at, state: currentJob.state, log_tail: currentJob.log_tail.slice(-40), ...(currentJob.kind === "book" ? { run: latestBookRun(root) } : {}) } : { kind: null, started_at: null, state: null, log_tail: [] }); return; }
       if (ASSETS.has(path)) { const [type, data] = ASSETS.get(path); send(response, 200, type, data); return; }
       try { const liveProject = readProject(root); const body = pageBody(path, root, liveProject, currentJob); if (body !== null) send(response, 200, "text/html; charset=utf-8", layout(body, root, liveProject)); else send(response, 404, "text/plain; charset=utf-8", "Page not found."); }
       catch (error) { send(response, 500, "text/plain; charset=utf-8", localMessage(error.message, root)); }
       return;
     }
-    if (request.method !== "POST" || !new Set(["/api/rulings", "/api/approve", "/api/reject", "/api/undo", "/api/jobs", "/api/state/accept"]).has(path)) { send(response, 404, "text/plain; charset=utf-8", "Page not found."); return; }
+    if (request.method !== "POST" || !new Set(["/api/rulings", "/api/approve", "/api/reject", "/api/undo", "/api/jobs", "/api/state/accept", "/api/proposals/accept", "/api/proposals/reject"]).has(path)) { send(response, 404, "text/plain; charset=utf-8", "Page not found."); return; }
     if (!validPost(request, boundPort)) { json(response, 403, { error: "This action is only available from the local studio page." }); return; }
     try {
       const doctor = runDoctor({ bookRoot: root });
       if (!doctor.ok) { const first = doctor.blocking[0]; json(response, 409, { error: `${first.problem}. ${first.why} ${first.fix}` }); return; }
       const data = await requestJson(request);
       const liveProject = readProject(root);
-      if (path === "/api/rulings") {
+      if (currentJob?.state === "running") { json(response, 409, { error: "A job is already running. Wait for it to finish." }); return; }
+      if (path === "/api/proposals/accept") {
+        const result = acceptProposal(root, liveProject, Number(data.chapter), { edits: data.edits ?? null, note: data.note || "" });
+        json(response, 200, { message: result.message });
+      } else if (path === "/api/proposals/reject") {
+        rejectProposal(root, Number(data.chapter), data.note || "");
+        json(response, 200, { message: `Chapter ${data.chapter}: rejected proposal saved for recovery.` });
+      } else if (path === "/api/rulings") {
         const finding = collectFindings(root, liveProject, { all: true });
         const selected = [...finding.findings, ...finding.notes].find((item) => item.id === data.id);
         if (!selected) throw new Error(`unknown finding id: ${data.id}`);
@@ -301,9 +322,11 @@ export async function startStudio({ root = process.cwd(), port = null } = {}) {
       } else {
         if (currentJob?.state === "running") { json(response, 409, { error: "A job is already running. Wait for it to finish." }); return; }
         const kind = data.kind, chapter = Number(data.chapter);
-        if (kind !== "bootstrap" && kind !== "review") throw new Error("Choose review or bootstrap.");
-        if (kind === "review" && (!Number.isInteger(chapter) || !loadScenes(root, liveProject).some((scene) => scene.chapter === chapter))) throw new Error("Choose an existing chapter.");
-        const args = kind === "review" ? [CLI, "review", "--chapter", String(chapter), "--run", "--root", root] : [CLI, "state", "bootstrap", "--run", "--root", root];
+        if (!["bootstrap", "review", "book", "repair"].includes(kind)) throw new Error("Choose review, bootstrap, book, or repair.");
+        if (["review", "repair"].includes(kind) && (!Number.isInteger(chapter) || !loadScenes(root, liveProject).some((scene) => scene.chapter === chapter))) throw new Error("Choose an existing chapter.");
+        const args = kind === "book" ? [CLI, "run", "--book", "--run", "--root", root]
+          : kind === "repair" ? [CLI, "repair", "--chapter", String(chapter), "--note", String(data.note || ""), "--run", "--root", root]
+          : kind === "review" ? [CLI, "review", "--chapter", String(chapter), "--run", "--root", root] : [CLI, "state", "bootstrap", "--run", "--root", root];
         const child = spawn(process.execPath, args, { cwd: root, env: { ...process.env }, stdio: ["ignore", "pipe", "pipe"] });
         currentJob = { kind, started_at: new Date().toISOString(), state: "running", log_tail: [], child };
         const job = currentJob;
@@ -311,7 +334,7 @@ export async function startStudio({ root = process.cwd(), port = null } = {}) {
         child.stdout.on("data", log); child.stderr.on("data", log);
         child.on("error", (error) => { log(`Could not start job: ${error.message}`); job.state = "failed"; });
         child.on("close", (code) => { job.state = code === 0 ? "done" : "failed"; });
-        json(response, 202, { message: `${kind === "review" ? `Chapter ${chapter} review` : "State bootstrap"} started.` });
+        json(response, 202, { message: `${kind === "book" ? "Whole-book check" : kind === "repair" ? `Chapter ${chapter} repair` : kind === "review" ? `Chapter ${chapter} review` : "State bootstrap"} started.` });
       }
     } catch (error) { json(response, 400, { error: localMessage(error.message, root) }); }
   });

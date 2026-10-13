@@ -7,7 +7,7 @@ async function refresh() {
   const next = new DOMParser().parseFromString(await response.text(), "text/html");
   document.getElementById("main").replaceWith(next.getElementById("main"));
   document.querySelector("footer").replaceWith(next.querySelector("footer"));
-  if (location.pathname === "/jobs" && document.querySelector("[data-poll='1']")) schedulePoll();
+  if (document.querySelector("[data-poll='1']")) schedulePoll();
 }
 async function post(route, data) {
   try {
@@ -30,6 +30,17 @@ document.addEventListener("click", (event) => {
   if (action === "undo") post("/api/undo", {});
   if (action === "accept-state") post("/api/state/accept", {});
   if (action === "review-job") post("/api/jobs", { kind: "review", chapter: Number(document.getElementById("review-chapter").value) });
+  if (action === "book-job") post("/api/jobs", { kind: "book" });
+  if (action.startsWith("proposal-")) {
+    const chapter = Number(button.dataset.chapter);
+    const note = document.getElementById(`proposal-note-${chapter}`).value;
+    if (action === "proposal-again") post("/api/jobs", { kind: "repair", chapter, note });
+    if (action === "proposal-reject") post("/api/proposals/reject", { chapter, note });
+    if (action === "proposal-accept") {
+      const edits = [...document.querySelectorAll(`input[data-proposal="${chapter}"]:checked`)].map((input) => Number(input.value));
+      post("/api/proposals/accept", { chapter, edits, note });
+    }
+  }
   if (action === "bootstrap-job") post("/api/jobs", { kind: "bootstrap" });
 });
 let pollTimer;
@@ -42,4 +53,4 @@ function schedulePoll() {
     } catch { message.textContent = "Job status is unavailable. Reload the page to reconnect."; }
   }, 2000);
 }
-if (location.pathname === "/jobs" && document.querySelector("[data-poll='1']")) schedulePoll();
+if (document.querySelector("[data-poll='1']")) schedulePoll();

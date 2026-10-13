@@ -39,7 +39,7 @@ book, and it tells you in plain words what to fix.
 ## Guardrails
 
 The AI edits prose; the author decides. Author commands (`approve`, `reject`,
-`undo`, `rule`, `state:accept`, `release`, `import`, and `guard seal`) refuse in
+`undo`, `rule`, `proposal`, `state:accept`, `release`, `import`, and `guard seal`) refuse in
 Claude Code and Codex shells. The author page still works when an AI launches it.
 Claude Code edit and shell hooks block protected settings and records, author
 commands, Git history/config writes, tool installation changes, and requests to
@@ -91,7 +91,7 @@ Start the local author page with `weaver studio --root ./my-book`. It listens
 only on `127.0.0.1:4187`; open `http://127.0.0.1:4187/` on the same computer.
 Use `--port N` to choose another port, or set `"studio": { "port": N }` in
 `project.json`. The studio works offline and uses no web services for its pages.
-Review and bootstrap jobs use the book's configured command-line AI host.
+Review, bootstrap, repair, and whole-book jobs use the book's configured command-line AI host.
 
 The home page shows approval progress and findings. Book is the reader, with
 chapter and scene status. Character pages show aliases, voice evidence, facts,
@@ -105,19 +105,69 @@ refusal. The author can read and decide entirely on the local page.
 ## Repair a finished book
 
 Use one Weaver project for each book in a series. Start an empty book, import
-the finished Word, Markdown, text, or folder source, then check and export it.
+the finished Word, Markdown, text, or folder source, then run the book and review its repair proposals.
 The original source is read-only and is never changed, moved, or renamed.
 
 ```bash
 npx weaver init ./my-book --id my-book --title "My Book" --empty
 npx weaver import ./finished-book.docx --root ./my-book
-npx weaver check --root ./my-book
+npx weaver run --book --run --root ./my-book
+npx weaver proposals --root ./my-book
+npx weaver studio --root ./my-book
+# Review the Proposals page, or accept selected edits from an author shell:
+npx weaver proposal accept --chapter 1 --edits 1,3 --root ./my-book
 npx weaver export --format docx --out ./repaired-book.docx --root ./my-book
 ```
 
-An imported book reports its narrative state as stale until a later workflow
-bootstraps that derived state; this is expected, and its critical-path check
-is skipped until a project-specific path is defined.
+The run checks rules, builds voices, records story-so-far state, runs every
+review lens (including book reviewers), and proposes repairs chapter by chapter.
+It makes one host call at a time. Repeating the command skips current records;
+interruptions preserve completed scenes. `--through-chapter N` limits the run.
+Omit `--run` to write packets without calling a host; answer a packet with
+`weaver submit <packet-id> --file <answer>`. Add `--json` for the run record and
+summary. Progress, attempts, errors, and timings live in `.weaver/runs/`.
+
+Host timeouts and non-zero exits get two retries, after 30 and 120 seconds.
+Set `"run": { "retry": { "delays_seconds": [30, 120] } }` in `project.json`
+to change those waits. An exhausted unit is recorded as failed and the book
+continues; a later run retries unfinished units. JSON contract errors get one
+correction round. Tests use only synthetic books and fake hosts.
+
+On Jobs, **Check whole book** runs this same process with live progress. On
+Proposals, read the before/after word diffs, select edits, and **Accept selected**.
+Acceptance applies those edits and records one chapter approval in Git. **Reject**
+keeps the proposal in `.weaver/rejected/proposals/`; **Ask again** requests a fresh
+proposal and can include an author note. The CLI equivalents are
+`weaver proposal reject --chapter N --note "reason"` and
+`weaver repair --chapter N --run --note "guidance"`. The AI never applies scene
+edits in this flow. Declined findings and dropped edits keep their reasons.
+Only proposals with kept edits are `ready`. If every edit is dropped and no
+finding is declined, the status is `no-usable-edits`; Proposals and the book-run
+summary show the drop reasons and how to **Ask again**. A response with declines
+and no kept edits is `declined`.
+
+Proposals cover blocking rules, voice warnings, queued judgments, and every
+finding ruled **fix**, excluding **allow** and **intended** rulings. They contain
+source Markdown, editorial rules, the character registry, world-bible context,
+and voice evidence. Weaver checks exact paragraph matches, flagged locations,
+unchanged paragraph counts, and word growth (default zero; configure
+`"repair": { "max_growth_words": 0 }`). It reruns rules and voice checks in
+memory and uses the same measured regression check as the pre-edit hook: a
+blocking rule must not get worse in measured value or finding count. A finding
+moving to another paragraph is not a regression. Scene and chapter counting
+targets list every paragraph with a counted occurrence and give a numeric goal.
+One target can have edits at several listed locations; partial reductions stay
+in the proposal as `partly fixed: 6 → 4 (limit 1)`. Judgment repairs remain
+proposals for the author to assess.
+Changing prose, findings, rules, rulings, or packet context makes a proposal
+stale. Acceptance refuses stale proposals, pending scene changes, and selections
+that leave blocking findings; use a ruling or Ask again to resolve those.
+
+Story-state acceptance remains explicit on Jobs or with `weaver state:accept`.
+It saves the accepted state files, manifest, and facts ledger in one approval
+commit. An edited scene makes that scene and all downstream state stale.
+The imported book's critical-path check is skipped until a project-specific
+path is defined. Export after working through the proposals.
 
 Scene prose uses Markdown-style `*italics*`; literal asterisks and backslashes
 are escaped. Bold Markdown is intentionally unsupported and is imported as

@@ -164,7 +164,9 @@ export function otherPendingChapters(root, project, chapter) {
 }
 
 function writeFooter(path, words) {
-  const raw = readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+  const original = readFileSync(path, "utf8");
+  const eol = original.includes("\r\n") ? "\r\n" : "\n";
+  const raw = original.replace(/\r\n/g, "\n");
   const lines = raw.split("\n");
   const separators = lines.flatMap((line, index) => line.trim() === "---" ? [index] : []);
   if (separators.length < 2) throw new Error(`${path}: expected metadata and footer separators`);
@@ -175,7 +177,7 @@ function writeFooter(path, words) {
     : `\n**Words:** ${words}${footer}`;
   if (updatedFooter !== footer) {
     lines.splice(footerStart, lines.length - footerStart, ...updatedFooter.split("\n"));
-    writeFileSync(path, lines.join("\n"));
+    writeFileSync(path, lines.join(eol));
   }
 }
 
@@ -202,7 +204,7 @@ function formatChapter(chapter) {
   return `Chapter ${chapter}`;
 }
 
-export function approveChapter(root, project, chapter = null, note = "") {
+export function approveChapter(root, project, chapter = null, note = "", { subject: customSubject } = {}) {
   const pending = pendingChanges(root, project);
   if (!pending.scenes.length) throw new Error("There are no scene changes waiting for approval.");
   const chapters = pending.chapters.map((entry) => entry.chapter);
@@ -223,7 +225,7 @@ export function approveChapter(root, project, chapter = null, note = "") {
   const paths = selected.map((scene) => scene.path);
   const add = git(root, ["add", "--all", "--", ...paths], { stdio: ["ignore", "pipe", "pipe"] });
   if (add.status !== 0) throw new Error(`could not stage the chapter changes: ${(add.stderr || "").trim()}`);
-  const subject = `Approve chapter ${selectedChapter}${note?.trim() ? `: ${note.trim()}` : ""}`;
+  const subject = customSubject || `Approve chapter ${selectedChapter}${note?.trim() ? `: ${note.trim()}` : ""}`;
   const commit = git(root, ["commit", "--only", "-m", subject, "-m", `Approved-with: ${GENERATOR}`, "--", ...paths], { stdio: ["ignore", "pipe", "pipe"] });
   if (commit.status !== 0) throw new Error(`could not save the approval: ${(commit.stderr || commit.stdout || "").trim()}`);
   const sha = git(root, ["rev-parse", "--short", "HEAD"], { stdio: ["ignore", "pipe", "pipe"] });
@@ -295,7 +297,7 @@ export function undoApproval(root) {
     const [sha, subject] = line.split("\0");
     return { sha, subject };
   });
-  const approval = entries.find((entry) => /^Approve chapter \d+/u.test(entry.subject));
+  const approval = entries.find((entry) => approvalDetails(entry.subject));
   if (!approval) throw new Error("There is no approval to undo.");
   const result = git(root, ["revert", "--no-commit", approval.sha], { stdio: ["ignore", "pipe", "pipe"] });
   if (result.status !== 0) {
@@ -309,7 +311,8 @@ export function undoApproval(root) {
 }
 
 function approvalDetails(subject) {
-  const match = /^Approve chapter (\d+)(?:: (.*))?$/u.exec(subject);
+  if (/^Accept story state through /u.test(subject)) return { chapter: null, note: subject };
+  const match = /^(?:Approve chapter |Repairs accepted, chapter )(\d+)(?: \(\d+ of \d+ edits\))?(?:: (.*))?$/u.exec(subject);
   return match ? { chapter: Number(match[1]), note: match[2] || "" } : null;
 }
 
@@ -320,9 +323,9 @@ export function approvalHistory(root) {
   for (const line of log.stdout.split("\n").filter(Boolean)) {
     const [sha, date, subject] = line.split("\0");
     const approval = approvalDetails(subject);
-    const undone = /^Revert "(Approve chapter \d+(?:: .*)?)"/u.exec(subject);
+    const undone = /^Revert "(.+)"$/u.exec(subject);
     if (approval) history.push({ type: "approval", date, chapter: approval.chapter, note: approval.note, id: sha.slice(0, 7) });
-    else if (undone) {
+    else if (undone && approvalDetails(undone[1])) {
       const details = approvalDetails(undone[1]);
       history.push({ type: "undo", date, chapter: details.chapter, note: details.note, id: sha.slice(0, 7) });
     }

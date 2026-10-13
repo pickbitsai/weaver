@@ -639,9 +639,9 @@ function pendingLineFilter(lines, scene, pendingScenes) {
   return (line) => changedParagraphs.has(line.paragraph);
 }
 
-export function runVoiceCheck(root, project, { sceneIds = null, pendingScenes = null } = {}) {
+export function runVoiceCheck(root, project, { sceneIds = null, pendingScenes = null, scenes: proposedScenes = null } = {}) {
   const characters = loadCharacters(root).characters;
-  const scenes = loadScenes(root, project).filter((scene) => !sceneIds || sceneIds.map(String).includes(scene.id));
+  const scenes = (proposedScenes || loadScenes(root, project)).filter((scene) => !sceneIds || sceneIds.map(String).includes(scene.id));
   const approved = approvedManuscript(root, project);
   const settings = voiceSettings(root);
   const lines = scenes.flatMap((scene) => attributeSpans(scene, characters));
@@ -714,7 +714,7 @@ export function runVoiceCheck(root, project, { sceneIds = null, pendingScenes = 
     }
     findings.push(finding);
   }
-  const filtered = applyRulings(root, project, findings, { kind: "voice", sourceOf: (finding) => finding.speaker, quoteOf: (finding) => finding.line });
+  const filtered = applyRulings(root, project, findings, { kind: "voice", sourceOf: (finding) => finding.speaker, quoteOf: (finding) => finding.line, scenes });
   return { findings: filtered.findings, notes, stale_profiles: staleProfiles, warnings: filtered.findings.length, hash: approved.manuscript_sha256 };
 }
 

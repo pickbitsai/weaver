@@ -40,11 +40,11 @@ async function validate(answerText, validator) {
   }
 }
 
-export async function validateAndRepair(root, project, packet, answerText, validator) {
+export async function validateAndRepair(root, project, packet, answerText, validator, { host = runHost } = {}) {
   const first = await validate(answerText, validator);
   if (first.ok) return { ...first, answerText, attempts: 1 };
   const repairPrompt = `${packet.prompt}\n\nYour previous answer failed validation:\n${first.errors.map((error) => `- ${error}`).join("\n")}\nReturn the complete corrected answer only.`;
-  const hostResult = await runHost(root, project, repairPrompt);
+  const hostResult = await host(root, project, repairPrompt);
   if (!hostResult.ok) return { ok: false, value: null, errors: first.errors, answerText, attempts: 1 + hostResult.attempts, host_error: hostResult.error };
   const repaired = await validate(hostResult.text, validator);
   return {

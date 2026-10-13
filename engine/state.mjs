@@ -8,6 +8,10 @@ import { runHost } from "./host.mjs";
 import { buildPacket, extractJsonBlock, validateAndRepair } from "./packets.mjs";
 import { countWords, loadScenes, manuscriptHash, sha256 } from "./manuscript.mjs";
 import { GENERATOR, SCHEMA_BASE } from "./identity.mjs";
+import { spawnSync } from "node:child_process";
+import { relative } from "node:path";
+import { ensureIdentity } from "./changes.mjs";
+import { writeRecord, writeTextRecord } from "./records.mjs";
 
 const FACT_KINDS = new Set(["location", "knowledge", "possession", "relationship", "event", "time"]);
 const EXTRACTOR_PROMPT = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "prompts", "state-extractor.md"), "utf8").trim();
@@ -113,7 +117,15 @@ export function acceptNarrativeState(root, project, throughSceneId = null) {
   };
   const directory = join(root, project.state_root);
   mkdirSync(directory, { recursive: true });
-  writeFileSync(stateManifestPath(root, project), `${JSON.stringify(next, null, 2)}\n`);
+  writeRecord(stateManifestPath(root, project), next);
+  const paths = [stateManifestPath(root, project), ...scenes.slice(0, targetIndex + 1).flatMap((scene) =>
+    [statePath(root, project, scene.id), factsPath(root, project, scene.id)]), factsLedgerPath(root)]
+    .filter((path) => existsSync(path)).map((path) => relative(root, path).replaceAll("\\", "/"));
+  ensureIdentity(root, project);
+  const stage = spawnSync("git", ["-C", root, "add", "--", ...paths], { encoding: "utf8" });
+  if (stage.status !== 0) throw new Error(`Could not stage story state: ${stage.stderr}`);
+  const commit = spawnSync("git", ["-C", root, "commit", "--only", "-m", `Accept story state through ${scenes[targetIndex].id}`, "-m", `Approved-with: ${GENERATOR}`, "--", ...paths], { encoding: "utf8" });
+  if (commit.status !== 0) throw new Error(`Could not save story state: ${commit.stderr || commit.stdout}`);
   return narrativeStateStatus(root, project);
 }
 
@@ -238,7 +250,7 @@ export function buildFactsLedger(root, project) {
     first_established: firstEstablished
   };
   mkdirSync(dirname(factsLedgerPath(root)), { recursive: true });
-  writeFileSync(factsLedgerPath(root), `${JSON.stringify(ledger, null, 2)}\n`);
+  writeRecord(factsLedgerPath(root), ledger);
   return ledger;
 }
 
@@ -316,41 +328,50 @@ function packetPath(root, packetId) {
   return join(root, ".weaver", "packets", `${packetId}.json`);
 }
 
-function isResumeCurrent(root, project, scene, statusRecord) {
-  if (!existsSync(statePath(root, project, scene.id)) || !existsSync(factsPath(root, project, scene.id))) return false;
-  if (statusRecord?.reason === "upstream-stale") return false;
-  try {
-    return JSON.parse(readFileSync(factsPath(root, project, scene.id), "utf8")).prose_sha256 === scene.hash;
-  } catch {
-    return false;
-  }
+export function recordedStateStatus(root, project) {
+  const accepted = narrativeStateStatus(root, project);
+  let upstream = EMPTY_UPSTREAM, upstreamCurrent = true;
+  return loadScenes(root, project).map((scene, index) => {
+    const state = existsSync(statePath(root, project, scene.id)) ? sha256(readFileSync(statePath(root, project, scene.id))) : null;
+    let facts = null;
+    try { facts = JSON.parse(readFileSync(factsPath(root, project, scene.id), "utf8")); } catch { /* Missing or interrupted record. */ }
+    const current = accepted.records[index].current || Boolean(upstreamCurrent && state && facts &&
+      facts.prose_sha256 === scene.hash && facts.state_sha256 === state && facts.upstream_sha256 === upstream);
+    const record = { scene: scene.id, current, upstream_sha256: upstream };
+    upstream = sha256(`${upstream}:${scene.hash}:${state}:${sha256(JSON.stringify(facts?.facts || []))}`);
+    upstreamCurrent = current;
+    return record;
+  });
 }
 
 function writeStateAnswer(root, project, scene, packet, answer) {
   const directory = join(root, project.state_root);
   mkdirSync(directory, { recursive: true });
-  writeFileSync(statePath(root, project, scene.id), `${answer.value.record}\n`);
-  writeFileSync(factsPath(root, project, scene.id), `${JSON.stringify({
+  writeTextRecord(statePath(root, project, scene.id), `${answer.value.record}\n`);
+  const upstream = recordedStateStatus(root, project).find((record) => record.scene === scene.id).upstream_sha256;
+  writeRecord(factsPath(root, project, scene.id), {
     $schema: `${SCHEMA_BASE}facts-1.json`,
     scene_id: scene.id,
     prose_sha256: scene.hash,
     packet_id: packet.id,
+    state_sha256: sha256(readFileSync(statePath(root, project, scene.id))),
+    upstream_sha256: upstream,
     generator: GENERATOR,
     facts: answer.value.facts
-  }, null, 2)}\n`);
+  });
 }
 
-export async function bootstrapState(root, project, { through = null, run = false, onProgress = (line) => process.stdout.write(`${line}\n`) } = {}) {
+export async function bootstrapState(root, project, { through = null, sceneIds = null, run = false, host = runHost, onUnit = () => {}, onProgress = (line) => process.stdout.write(`${line}\n`) } = {}) {
   const scenes = loadScenes(root, project);
   const throughIndex = through ? scenes.findIndex((scene) => scene.id === through) : scenes.length - 1;
   if (throughIndex < 0) throw new Error(`unknown scene: ${through}`);
   let ledger = buildFactsLedger(root, project);
-  const status = narrativeStateStatus(root, project);
   for (let index = 0; index <= throughIndex; index += 1) {
     const scene = scenes[index];
-    const statusRecord = status.records[index];
-    if (isResumeCurrent(root, project, scene, statusRecord)) {
+    if (sceneIds && !sceneIds.includes(scene.id)) continue;
+    if (recordedStateStatus(root, project)[index].current) {
       onProgress(`Scene ${scene.id}: skipped, already current`);
+      onUnit({ status: "skipped", scene: scene.id });
       continue;
     }
     const previous = scenes[index - 1];
@@ -359,21 +380,25 @@ export async function bootstrapState(root, project, { through = null, run = fals
     writeFileSync(packetPath(root, packet.id), `${JSON.stringify(packet, null, 2)}\n`);
     if (!run) {
       onProgress(`Scene ${scene.id}: packet ${packet.id} written; answer it with weaver submit ${packet.id} --file <answer>`);
+      onUnit({ status: "packet", scene: scene.id, packet_id: packet.id });
       continue;
     }
-    const hostResult = await runHost(root, project, packet.prompt);
+    const hostResult = await host(root, project, packet.prompt);
     if (!hostResult.ok) {
       onProgress(`Scene ${scene.id}: host error: ${hostResult.error}`);
+      onUnit({ status: "failed", scene: scene.id, error: hostResult.error });
       continue;
     }
-    const answer = await validateAndRepair(root, project, packet, hostResult.text, (answerText) => validateStateAnswer(scene, root, answerText));
+    const answer = await validateAndRepair(root, project, packet, hostResult.text, (answerText) => validateStateAnswer(scene, root, answerText), { host });
     if (!answer.ok) {
       onProgress(`Scene ${scene.id}: answer invalid after repair: ${answer.errors[0]}`);
+      onUnit({ status: "failed", scene: scene.id, error: answer.host_error || answer.errors.join("; ") });
       continue;
     }
     writeStateAnswer(root, project, scene, packet, answer);
     ledger = buildFactsLedger(root, project);
     onProgress(`Scene ${scene.id}: recorded (${answer.value.facts.length} facts)`);
+    onUnit({ status: "recorded", scene: scene.id, packet_id: packet.id });
   }
   const finalLedger = buildFactsLedger(root, project);
   return { ledger: finalLedger };

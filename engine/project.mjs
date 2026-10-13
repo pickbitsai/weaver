@@ -49,5 +49,11 @@ export function validateProject(project) {
     if (!project.studio || typeof project.studio !== "object" || Array.isArray(project.studio)) errors.push("studio must be an object");
     else if (project.studio.port !== undefined && (!Number.isInteger(project.studio.port) || project.studio.port < 1 || project.studio.port > 65535)) errors.push("studio.port must be an integer from 1 to 65535");
   }
+  if (project?.repair !== undefined && (!project.repair || typeof project.repair !== "object" || Array.isArray(project.repair))) errors.push("repair must be an object");
+  if (project?.repair?.max_growth_words !== undefined && (!Number.isInteger(project.repair.max_growth_words) || project.repair.max_growth_words < 0)) errors.push("repair.max_growth_words must be a non-negative integer");
+  if (project?.run?.retry?.delays_seconds !== undefined) {
+    const waits = project.run.retry.delays_seconds;
+    if (!Array.isArray(waits) || waits.length !== 2 || waits.some((value) => !Number.isFinite(value) || value < 0)) errors.push("run.retry.delays_seconds must contain two non-negative waits");
+  }
   return errors;
 }

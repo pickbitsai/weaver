@@ -79,7 +79,8 @@ function runAttempt(config, promptText) {
     });
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      if (process.platform === "win32" && child.pid) spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      else child.kill();
       finish({ ok: false, text: stdout, error: `host timed out after ${config.timeout_seconds} seconds` });
     }, config.timeout_seconds * 1000);
     try {
@@ -90,11 +91,11 @@ function runAttempt(config, promptText) {
   });
 }
 
-export async function runHost(root, project, promptText) {
+export async function runHost(root, project, promptText, { attempts = 2 } = {}) {
   const config = { ...hostConfig(project), cwd: root };
   const failures = [];
   const started = Date.now();
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const result = await runAttempt(config, promptText);
     if (result.ok) {
       return { ok: true, text: result.text, seconds: (Date.now() - started) / 1000, attempts: attempt };
@@ -105,8 +106,8 @@ export async function runHost(root, project, promptText) {
     ok: false,
     text: "",
     seconds: (Date.now() - started) / 1000,
-    attempts: 2,
-    error: `host failed after 2 attempts: ${failures.join("; ")}`
+    attempts,
+    error: `host failed after ${attempts} attempts: ${failures.join("; ")}`
   };
 }
 

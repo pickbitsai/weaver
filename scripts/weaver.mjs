@@ -23,6 +23,8 @@ import { reviewerWarnings } from "../engine/reviewers.mjs";
 import { rulingStatuses, saveRuling } from "../engine/rulings.mjs";
 import { startStudio } from "../engine/studio.mjs";
 import { authorCommandRefusal, sealBookSettings } from "../engine/guard.mjs";
+import { acceptProposal, rejectProposal, listProposals, repairChapter, submitRepairPacket, proposalSummary } from "../engine/repair.mjs";
+import { runBook } from "../engine/run.mjs";
 
 const argv = process.argv.slice(2);
 const command = argv.shift() || "help";
@@ -316,13 +318,16 @@ try {
       if (!packetId || !answerPath) throw new Error("usage: weaver submit <packet-id> --file <answer> [--root directory]");
       const { project } = projectContext();
       const packet = readPacket(root, packetId);
-      const result = packet.kind === "REVIEW"
+      const result = packet.kind === "REPAIR"
+        ? await submitRepairPacket(root, project, packet, readFileSync(resolve(answerPath), "utf8"))
+        : packet.kind === "REVIEW"
         ? await submitReviewPacket(root, project, packet, readFileSync(resolve(answerPath), "utf8"))
         : await submitStatePacket(root, project, packetId, readFileSync(resolve(answerPath), "utf8"));
       if (!result.ok) {
         print(`Packet ${packetId}: answer invalid after repair: ${result.errors[0]}`);
         process.exitCode = 1;
-      } else if (packet.kind === "REVIEW") print(`Chapter ${result.record.chapter} ${result.record.lens}: recorded (${result.record.findings.length} findings, ${result.record.dropped_findings} dropped)`);
+      } else if (packet.kind === "REPAIR") print(proposalSummary(result.record));
+      else if (packet.kind === "REVIEW") print(`Chapter ${result.record.chapter} ${result.record.lens}: recorded (${result.record.findings.length} findings, ${result.record.dropped_findings} dropped)`);
       else print(`Scene ${result.scene_id}: recorded (${result.facts} facts)`);
     }
   } else if (command === "review") {
@@ -333,6 +338,44 @@ try {
       if (!Number.isInteger(chapter) || chapter < 1) throw new Error("usage: weaver review --chapter N [--lenses id,id] [--run]");
       const lenses = option("--lenses")?.split(",").map((item) => item.trim()) || undefined;
       await runReview(root, project, { chapter, lenses, run: argv.includes("--run") });
+    }
+  } else if (command === "repair") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const result = await repairChapter(root, project, { chapter: Number(option("--chapter")), run: argv.includes("--run"), note: option("--note", ""), ...(argv.includes("--json") ? { onProgress: () => {} } : {}) });
+      if (argv.includes("--json")) print(result);
+      if (result.status === "failed") process.exitCode = 1;
+    }
+  } else if (command === "proposals") {
+    const { project } = projectContext();
+    const records = listProposals(root, project);
+    print(argv.includes("--json") ? records : records.map(proposalSummary).join("\n") || "No proposals yet.");
+  } else if (command === "proposal") {
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const chapter = Number(option("--chapter"));
+      if (positional() === "accept") {
+        const result = acceptProposal(root, project, chapter, { edits: option("--edits")?.split(",").map(Number) ?? null, note: option("--note", "") });
+        print(`Approval ${result.id}: ${result.message}`);
+      } else if (positional() === "reject") {
+        const result = rejectProposal(root, chapter, option("--note", ""));
+        print(`Chapter ${chapter}: rejected proposal saved in ${result.path}`);
+      } else throw new Error("usage: weaver proposal accept|reject --chapter N [--edits 1,3] [--note text]");
+    }
+  } else if (command === "run") {
+    if (!argv.includes("--book")) throw new Error("usage: weaver run --book [--through-chapter N] [--run] [--json]");
+    if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
+    else {
+      const { project } = projectContext();
+      const result = await runBook(root, project, { throughChapter: option("--through-chapter"), run: argv.includes("--run"), ...(argv.includes("--json") ? { onProgress: () => {} } : {}) });
+      print(argv.includes("--json") ? result : `Book run finished: ${result.summary.chapters_checked} chapters checked, ${result.summary.scenes_recorded} scenes recorded, ${result.summary.reviews_run} reviews run, ${result.summary.proposals_ready} proposals ready, ${result.summary.no_usable_edits.length} with no usable edits, ${result.summary.proposals_declined} declined, ${result.summary.nothing_to_repair} with nothing to repair, ${result.summary.failures.length} failures, ${result.summary.total_seconds.toFixed(1)} seconds.\nRun record: ${result.path}`);
+      if (!argv.includes("--json")) for (const proposal of result.summary.no_usable_edits) print(proposalSummary({ ...proposal, edits: [], declined: [] }));
+      if (result.summary.failures.length) {
+        if (!argv.includes("--json")) for (const failure of result.summary.failures) print(`${failure.unit}: ${failure.error}`);
+        process.exitCode = 1;
+      }
     }
   } else if (command === "findings") {
     const { project } = projectContext();
@@ -482,6 +525,10 @@ Usage:
   weaver voices build [--root directory] [--json]
   weaver voices check [--scene scene-id | --pending] [--root directory] [--json]
   weaver review --chapter N [--lenses id,id] [--run] [--root directory]
+  weaver repair --chapter N [--run] [--note text]
+  weaver proposals [--json]
+  weaver proposal accept|reject --chapter N [--edits 1,3] [--note text]
+  weaver run --book [--through-chapter N] [--run] [--json]
   weaver findings [--chapter N] [--all] [--to-fix] [--json] [--root directory]
   weaver rule <finding-id> --decision fix|allow|intended [--note text] [--root directory]
   weaver rulings [--json] [--root directory]
@@ -516,6 +563,10 @@ Usage:
   weaver voices build [--root directory] [--json]
   weaver voices check [--scene scene-id | --pending] [--root directory] [--json]
   weaver review --chapter N [--lenses id,id] [--run] [--root directory]
+  weaver repair --chapter N [--run] [--note text]
+  weaver proposals [--json]
+  weaver proposal accept|reject --chapter N [--edits 1,3] [--note text]
+  weaver run --book [--through-chapter N] [--run] [--json]
   weaver findings [--chapter N] [--all] [--to-fix] [--json] [--root directory]
   weaver rule <finding-id> --decision fix|allow|intended [--note text] [--root directory]
   weaver rulings [--json] [--root directory]

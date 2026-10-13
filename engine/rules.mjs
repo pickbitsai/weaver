@@ -253,6 +253,8 @@ function makeFinding(rule, scene, paragraph, index, length, extra = {}) {
     chapter: scene.chapter,
     paragraph: paragraph.number,
     excerpt: excerpt(value, inParagraph, length),
+    sentence: splitSentences(value).find((sentence) => inParagraph >= sentence.start && inParagraph < sentence.start + sentence.text.length)?.text || value,
+    matched_text: value.slice(inParagraph, inParagraph + length),
     message: rule.scope_reason ? `${rule.message} ${rule.scope_reason}.` : rule.message,
     ...(rule.scope_reason ? { scope: effectiveScope(rule), scope_reason: rule.scope_reason,
       ...Object.fromEntries(CHARACTER_SCOPES.filter((key) => rule[key] !== undefined).map((key) => [key, rule[key]])) } : {}),
@@ -275,12 +277,22 @@ function sentenceRecords(paragraph, scope) {
   return records.sort((a, b) => a.start - b.start);
 }
 
+function countedLocations(matches) {
+  const locations = new Map();
+  for (const { paragraph } of matches) {
+    const key = `${paragraph.scene.id}:${paragraph.number}`;
+    if (!locations.has(key)) locations.set(key, { scene_id: paragraph.scene.id, paragraph: paragraph.number, count: 0 });
+    locations.get(key).count++;
+  }
+  return [...locations.values()];
+}
+
 function evaluateRule(rule, scene, paragraphs, unitParagraphs, measurements) {
   const findings = [];
   const scope = rule;
   const measured = (finding, value, exceeded) => {
     // Keep below-limit counts too, so a pre-edit comparison can report the
-    // actual starting count. Ordinary rule findings keep their existing shape.
+    // actual starting count, even after the last occurrence is removed.
     measurements?.push({ ...finding, value, exceeded });
     if (exceeded) findings.push(finding);
   };
@@ -293,8 +305,14 @@ function evaluateRule(rule, scene, paragraphs, unitParagraphs, measurements) {
       const count = matches.length;
       if (groupParagraphs.length) {
         const match = matches[0] || { paragraph: groupParagraphs[0], index: 0, length: 0 };
-        measured(makeFinding(rule, scene, match.paragraph, match.index, match.length, { count, limit: rule.max }),
-          words > 0 ? count * rule.per_words / words : 0,
+        const value = words > 0 ? count * rule.per_words / words : 0;
+        const countLimit = Math.floor(rule.max * words / rule.per_words);
+        const label = rule.text === "—" ? "em dashes" : `occurrences of ${JSON.stringify(rule.text)}`;
+        measured(makeFinding(rule, scene, match.paragraph, match.index, match.length, { count, limit: rule.max,
+          measurement: { unit: rule.unit, value, limit: rule.max, count_limit: countLimit, words, per_words: rule.per_words },
+          locations: countedLocations(matches),
+          goal: `${rule.unit} has ${count} ${label} in ${effectiveScope(rule) === "all" ? "all text" : effectiveScope(rule)}, limit ${countLimit} for its length (${words} words); remove at least ${Math.max(0, count - countLimit)}.` }),
+          value,
           words > 0 && count * rule.per_words > rule.max * words && count > 0);
       }
     }
@@ -330,9 +348,16 @@ function evaluateRule(rule, scene, paragraphs, unitParagraphs, measurements) {
     for (const group of records) {
       const paragraph = group.records[0]?.paragraph || group.paragraph || paragraphs[0];
       if (!paragraph) continue;
-      const wanted = group.records.filter((sentence) => sentenceStart(sentence.text).toLocaleLowerCase() === rule.word.toLocaleLowerCase()).length;
+      const matches = group.records.filter((sentence) => sentenceStart(sentence.text).toLocaleLowerCase() === rule.word.toLocaleLowerCase());
+      const wanted = matches.length;
       const share = group.records.length ? wanted / group.records.length : 0;
-      measured(makeFinding(rule, scene, paragraph, group.records[0]?.start || 0, 0, { count: wanted, limit: rule.max_share }),
+      const countLimit = Math.floor(rule.max_share * group.records.length);
+      measured(makeFinding(rule, scene, paragraph, group.records[0]?.start || 0, 0, { count: wanted, limit: rule.max_share,
+        ...(rule.unit === "scene" ? {
+          measurement: { unit: rule.unit, value: share, limit: rule.max_share, count_limit: countLimit, sentences: group.records.length },
+          locations: countedLocations(matches),
+          goal: `scene has ${wanted} sentences starting with ${JSON.stringify(rule.word)} in ${effectiveScope(rule) === "all" ? "all text" : effectiveScope(rule)} out of ${group.records.length} sentences, limit ${countLimit} (${rule.max_share * 100}%); change at least ${Math.max(0, wanted - countLimit)} openings, keeping the same sentence total.`
+        } : {}) }),
         share, group.records.length >= rule.min_sentences && share > rule.max_share);
     }
   } else if (rule.type === "repeated-sentence-starts") {
@@ -375,7 +400,7 @@ function prepareScene(scene, characters) {
   return paragraphs.filter((paragraph) => paragraph.text.trim());
 }
 
-function runRulesOnScenes(root, project, allScenes, { sceneIds = null, includeMeasurements = false } = {}) {
+export function runRulesOnScenes(root, project, allScenes, { sceneIds = null, includeMeasurements = false } = {}) {
   const document = loadRules(root);
   const characters = loadCharacters(root).characters;
   const rules = document.rules.map((rule) => ({ ...rule,

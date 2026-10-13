@@ -61,6 +61,7 @@ test("shell guard denies normal author, history, installation, settings, and HTT
   const { root } = fixture(t);
   const commands = [
     "npx weaver approve --chapter 3", "npx --no-install weaver approve",
+    "npx weaver proposal accept --chapter 2", "npx.cmd weaver proposal reject --chapter 2",
     "node node_modules/weaver/scripts/weaver.mjs rule F1 --decision allow",
     'cmd /c "npx weaver undo"', "echo ok && npx weaver release --id x",
     'git commit -am "fix"', "git -C . reset --hard HEAD~1", "git config user.name x",
@@ -180,6 +181,11 @@ for (const command of AUTHOR_ONLY_COMMANDS) test(`CLI author environment can run
   if (command === "rule") {
     writeFileSync(join(root, "quality", "rules.json"), JSON.stringify({ version: 1, rules: [{ id: "test-phrase", type: "phrase-list", severity: "warn", message: "Check this phrase.", phrases: ["first line"] }] }));
     args.push(collectFindings(root, readProject(root)).findings[0].id, "--decision", "allow");
+  }
+  if (command === "proposal") {
+    mkdirSync(join(root, ".weaver", "proposals"), { recursive: true });
+    writeFileSync(join(root, ".weaver", "proposals", "chapter-01.json"), JSON.stringify({ chapter: 1, status: "nothing-to-repair", edits: [], declined: [], dropped_edits: [] }));
+    args.push("reject", "--chapter", "1", "--note", "Author reviewed this proposal.");
   }
   if (command === "release") { acceptNarrativeState(root, readProject(root)); args.push("--id", "guard-test"); }
   if (command === "import") { const source = join(base, "source.md"); writeFileSync(source, "# Chapter 1\n\nAn original scene.\n"); args.push(source); }
