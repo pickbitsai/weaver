@@ -104,6 +104,23 @@ bootstrap and lets the author read and accept the resulting state. The doctor fo
 same engine action as its matching Weaver command and obeys the same doctor
 refusal. The author can read and decide entirely on the local page.
 
+## Shareable report
+
+Run `npx weaver report --out my-book-report.html --root ./my-book`, or use
+**Download report** in the studio. The report is one self-contained file that opens
+offline in any browser, supports light and dark mode, and prints well with
+**Print or save as PDF**.
+
+It includes the title and version stamp, progress and counts, per-chapter findings,
+proposed repairs as before/after word diffs with reasons, declined findings,
+dropped edits, world bible, story so far, rules, and setup check. Use `--chapters
+2,4,7-9` to choose chapters or `--sections summary,findings,proposals` to choose
+sections (also available: `canon,state,rules`).
+
+The report contains manuscript excerpts: share it only with people you trust.
+Weaver never replaces a file that is not a Weaver report, and refuses to save
+reports inside the book's protected or manuscript folders.
+
 ## Repair a finished book
 
 Use one Weaver project for each book in a series. Start an empty book, import

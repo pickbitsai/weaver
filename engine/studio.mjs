@@ -27,15 +27,15 @@ const ASSETS = new Map([
   ["/studio.css", ["text/css; charset=utf-8", readFileSync(join(PACKAGE_ROOT, "studio", "studio.css"))]],
   ["/studio.js", ["text/javascript; charset=utf-8", readFileSync(join(PACKAGE_ROOT, "studio", "studio.js"))]]
 ]);
-const NAV = [["/", "Home"], ["/book", "Book"], ["/characters", "Characters"], ["/places", "Places"], ["/threads", "Threads"], ["/findings", "Findings"], ["/proposals", "Proposals"], ["/rules", "Rules"], ["/changes", "Changes"], ["/history", "History"], ["/jobs", "Jobs"]];
-const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+const NAV = [["/", "Home"], ["/book", "Book"], ["/characters", "Characters"], ["/places", "Places"], ["/threads", "Threads"], ["/findings", "Findings"], ["/proposals", "Proposals"], ["/rules", "Rules"], ["/changes", "Changes"], ["/history", "History"], ["/jobs", "Jobs"], ["/report.html", "Download report"]];
+export const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 const chapterSlug = (number) => `chapter-${String(number).padStart(2, "0")}`;
 const sceneSlug = (number) => `scene-${String(number).padStart(2, "0")}`;
 const chapterHref = (number) => `/book/${chapterSlug(number)}`;
 const sceneHref = (scene) => `${chapterHref(scene.chapter)}/${sceneSlug(scene.scene)}`;
 const paragraphs = (prose) => prose.split(/\n\s*\n/u).filter((part) => part.trim());
 const list = (items) => items.length ? `<ul>${items.map((item) => `<li>${item}</li>`).join("")}</ul>` : "<p>None yet.</p>";
-const localMessage = (message, root) => String(message || "Something went wrong.").replaceAll(root, "the book folder").replace(/[A-Za-z]:\\[^\s:]+/gu, "a local file");
+export const localMessage = (message, root) => String(message || "Something went wrong.").replaceAll(root, "the book folder").replace(/[A-Za-z]:\\[^\s:]+/gu, "a local file");
 
 function gitSubjects(root) {
   const result = spawnSync("git", ["-C", root, "log", "--reverse", "--format=%s"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
@@ -98,7 +98,7 @@ function statusChips(chapter, pending, findings, approved) {
   return chips.map((chip) => `<span class="chip">${chip}</span>`).join(" ");
 }
 
-function placeGroups(ledger) {
+export function placeGroups(ledger) {
   const places = new Map();
   for (const [subject, facts] of Object.entries(ledger.subjects || {})) for (const fact of facts) {
     if (fact.kind !== "location") continue;
@@ -109,7 +109,7 @@ function placeGroups(ledger) {
   return places;
 }
 
-function threadGroups(root, project, scenes) {
+export function threadGroups(root, project, scenes) {
   const threads = new Map();
   for (const scene of scenes) {
     const path = statePath(root, project, scene.id);
@@ -282,6 +282,18 @@ export async function startStudio({ root = process.cwd(), port = null } = {}) {
     if (request.method === "GET") {
       if (path === "/api/health") { json(response, 200, { service: "pickbits-weaver-studio", generator: GENERATOR, book: project.project_id }); return; }
       if (path === "/api/jobs/current") { json(response, 200, currentJob ? { kind: currentJob.kind, host: currentJob.host, started_at: currentJob.started_at, state: currentJob.state, log_tail: currentJob.log_tail.slice(-40), ...(currentJob.kind === "book" ? { run: latestBookRun(root) } : {}) } : { kind: null, started_at: null, state: null, log_tail: [] }); return; }
+      if (path === "/report.html") {
+        // The whole-book report leaves only for the local studio page (a rebound host name gets nothing).
+        if (![`127.0.0.1:${boundPort}`, `localhost:${boundPort}`].includes(request.headers.host)) { send(response, 403, "text/plain; charset=utf-8", "The report is only available from the local studio page."); return; }
+        try {
+          const { buildReport, reportFileName, reportCsp } = await import("./report.mjs");
+          const liveProject = readProject(root);
+          const { html } = buildReport(root);
+          response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-disposition": `attachment; filename="${reportFileName(liveProject)}"`, "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "content-security-policy": reportCsp({ header: true }) });
+          response.end(html);
+        } catch (error) { send(response, 500, "text/plain; charset=utf-8", localMessage(error.message, root)); }
+        return;
+      }
       if (ASSETS.has(path)) { const [type, data] = ASSETS.get(path); send(response, 200, type, data); return; }
       try { const liveProject = readProject(root); const body = pageBody(path, root, liveProject, currentJob); if (body !== null) send(response, 200, "text/html; charset=utf-8", layout(body, root, liveProject)); else send(response, 404, "text/plain; charset=utf-8", "Page not found."); }
       catch (error) { send(response, 500, "text/plain; charset=utf-8", localMessage(error.message, root)); }

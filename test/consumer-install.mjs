@@ -104,6 +104,12 @@ try {
   const repairDocx = join(consumer, "consumer-repair.docx");
   weaver(["export", "--format", "docx", "--out", repairDocx, "--root", repairBook]);
   assert.equal(readFileSync(repairDocx).subarray(0, 2).toString(), "PK");
+  const repairReport = join(consumer, "consumer-repair-report.html");
+  weaver(["report", "--out", repairReport, "--root", repairBook]);
+  assert.ok(existsSync(repairReport));
+  const reportHtml = readFileSync(repairReport, "utf8");
+  assert.ok(reportHtml.startsWith("<!doctype html>"));
+  assert.ok(reportHtml.includes("Contains manuscript excerpts. Share only with people you trust."));
 
   const doctor = JSON.parse(weaver(["doctor", "--json", "--root", book]));
   assert.equal(doctor.checks.find((check) => check.id === "install-integrity").status, "pass");
