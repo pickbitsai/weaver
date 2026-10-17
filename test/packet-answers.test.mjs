@@ -2,19 +2,22 @@
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { runHost } from "../engine/host.mjs";
 import { importBook } from "../engine/import.mjs";
 import { initializeProject } from "../engine/init.mjs";
-import { buildPacket, canonicalVerdict, checkVerdict, extractJsonBlock, readVerdictLine, validateAndRepair, verdictWords } from "../engine/packets.mjs";
+import { buildPacket, canonicalVerdict, checkVerdict, extractJsonBlock, quoteForAuthor, savedAnswerNote, validateAndRepair, verdictKey, verdictLines, verdictWords } from "../engine/packets.mjs";
+import { collectFindings } from "../engine/findings.mjs";
 import { readProject } from "../engine/project.mjs";
-import { repairChapter } from "../engine/repair.mjs";
+import { proposalSummary, repairChapter } from "../engine/repair.mjs";
+import { writeTextRecord } from "../engine/records.mjs";
+import { listLenses } from "../engine/reviewers.mjs";
 import { buildReviewPacket, reviewRecordPath, submitReviewPacket, validateReviewAnswer } from "../engine/review.mjs";
 import { runBook } from "../engine/run.mjs";
-import { bootstrapState, submitStatePacket } from "../engine/state.mjs";
+import { bootstrapState, buildStatePacket, submitStatePacket } from "../engine/state.mjs";
 import { makeBook } from "./helpers/book.mjs";
 import { authorEnv } from "./helpers/env.mjs";
 
@@ -64,9 +67,10 @@ const realParagraphs = JSON.parse(readFileSync(join(FIXTURES, "paragraphs.json")
 const fixtureNames = readdirSync(FIXTURES).filter((name) => name.endsWith(".answer.txt"));
 assert.equal(fixtureNames.length, 4);
 for (const name of fixtureNames) {
-  for (const endings of ["original", "CRLF"]) test(`real answer records every finding: ${name}, ${endings}`, () => {
+  for (const endings of ["LF", "CRLF"]) test(`real answer records every finding: ${name}, ${endings}`, () => {
     const raw = readFileSync(join(FIXTURES, name), "utf8");
-    const text = endings === "CRLF" ? raw.replace(/\r?\n/gu, "\r\n") : raw;
+    const lf = raw.replace(/\r\n/gu, "\n");
+    const text = endings === "CRLF" ? lf.replace(/\n/gu, "\r\n") : lf;
     const document = JSON.parse([...text.matchAll(/```json\s*([\s\S]*?)```/giu)].at(-1)[1]);
     const result = validateReviewAnswer(text, "style", realParagraphs);
     assert.equal(result.ok, true);
@@ -78,20 +82,53 @@ for (const name of fixtureNames) {
   });
 }
 
-test("verdict line formatting and placement do not change the JSON verdict", () => {
-  const lines = ["STYLE: DRIFT", "**STYLE: DRIFT**", "**STYLE:** DRIFT", "STYLE: **DRIFT**", "__STYLE: DRIFT__",
-    "Style: drift.", "`STYLE: DRIFT`", "## STYLE: DRIFT", "> STYLE: DRIFT", "- STYLE: DRIFT", "STYLE - DRIFT",
-    "STYLE: DRIFT — two passages slip into modern idiom.", "A short preamble.\n\nSTYLE: DRIFT", "```\nSTYLE: DRIFT\n```", "",
-    "+ STYLE: DRIFT", "* STYLE: DRIFT", "• STYLE: DRIFT", "1. STYLE: DRIFT", "> ## 2. __STYLE: DRIFT__",
-    "STYLE – DRIFT", "STYLE — DRIFT", "STYLE : DRIFT", '“STYLE: DRIFT”'];
-  const texts = [...lines.map((line) => answer("DRIFT", line)), `${jsonBlock({ verdict: "DRIFT", findings: [] })}\nSTYLE: DRIFT\n`];
-  for (const original of texts) for (const text of [original, original.replace(/\n/gu, "\r\n")]) {
-    const result = validateReviewAnswer(text, "style", paragraphs);
-    assert.equal(result.ok, true, text);
-    assert.equal(result.value.verdict, "DRIFT", text);
-    assert.deepEqual(result.warnings, [], text);
+const disagreement = (line, word = "DRIFT", verdict = "CONSISTENT") =>
+  `The verdict line "${line}" says ${word}, but the JSON block says ${verdict}. Weaver recorded ${verdict}, from the JSON block.`;
+const unreadable = (line) => `The verdict line "${line}" does not name CONSISTENT or DRIFT. Weaver recorded CONSISTENT, from the JSON block.`;
+
+test("every verdict line shape is recognised in agreement and disagreement, with LF and CRLF", () => {
+  // Single-line literals are also the expected author quote: decoration must survive.
+  const shapes = [
+    "STYLE: DRIFT", "**STYLE: DRIFT**", "**STYLE:** DRIFT", "STYLE: **DRIFT**", "__STYLE: DRIFT__",
+    "Style: drift.", "style: DRIFT", "sTyLe: drift", "`STYLE: DRIFT`", "## STYLE: DRIFT",
+    "> STYLE: DRIFT", "- STYLE: DRIFT", "+ STYLE: DRIFT", "* STYLE: DRIFT", "• STYLE: DRIFT",
+    "◦ STYLE: DRIFT", "‣ STYLE: DRIFT", "1. STYLE: DRIFT", "1) STYLE: DRIFT", "(1) STYLE: DRIFT",
+    "> ## 2. __STYLE: DRIFT__", "STYLE - DRIFT", "STYLE -DRIFT", "STYLE- DRIFT", "STYLE -- DRIFT",
+    "STYLE ‐ DRIFT", "STYLE ‑ DRIFT", "STYLE ‒ DRIFT", "STYLE – DRIFT", "STYLE — DRIFT", "STYLE ― DRIFT", "STYLE − DRIFT",
+    "STYLE : DRIFT", "STYLE:DRIFT", "STYLE = DRIFT", "STYLE → DRIFT", "STYLE ⇒ DRIFT", "STYLE -> DRIFT", "STYLE => DRIFT",
+    "STYLE： DRIFT", ["STYLE\u3000: DRIFT", "STYLE : DRIFT"], ["\uFEFFSTYLE: DRIFT", "STYLE: DRIFT"],
+    "“STYLE: DRIFT”", "[STYLE: DRIFT]", "(STYLE: DRIFT)", "| STYLE: DRIFT |", "| STYLE | DRIFT |", "STYLE (DRIFT)", "STYLE [DRIFT]",
+    "Verdict: DRIFT", "**Verdict:** DRIFT", "Style verdict: DRIFT", "**Style verdict:** DRIFT", "STYLE VERDICT: DRIFT",
+    "Style lens: DRIFT", "STYLE REVIEW: DRIFT", "Style lens verdict: DRIFT", "Overall verdict: DRIFT", "Final verdict: DRIFT",
+    "Final Style review: DRIFT", "Verdict: STYLE: DRIFT",
+    "STYLE: DRIFT — two passages slip into modern idiom.", "STYLE: DRIFT - two passages slip.",
+    "STYLE: DRIFT (two passages)", "STYLE: DRIFT, in two passages", "STYLE DRIFT", "**DRIFT**", "Drift.", "DRIFT — two passages slip.",
+    "STYLE: DRIFT; notes", "STYLE: DRIFT: notes", "STYLE: DRIFT! notes", "STYLE: DRIFT? notes", "STYLE: DRIFT… notes",
+    "STYLE: DRIFT [notes]", "STYLE: DRIFT → notes", "STYLE: DRIFT ‐ notes", "STYLE: DRIFT ‑ notes",
+    "STYLE: DRIFT ‒ notes", "STYLE: DRIFT – notes", "STYLE: DRIFT ― notes", "STYLE: DRIFT − notes", "STYLE: DRIFT --",
+    ["## Verdict\n**DRIFT**", "**DRIFT**"], ["STYLE:\nDRIFT", "DRIFT"], ["**Style verdict:**\n\nDRIFT", "DRIFT"],
+    ["Style review\nDRIFT", "DRIFT"], ["A short preamble.\n\nSTYLE: DRIFT", "STYLE: DRIFT"], ["```\nSTYLE: DRIFT\n```", "STYLE: DRIFT"],
+    [null, "STYLE: DRIFT"]
+  ];
+  for (const shape of shapes) {
+    const [line, expectedQuote] = Array.isArray(shape) ? shape : [shape, shape];
+    for (const verdict of ["DRIFT", "CONSISTENT"]) for (const eol of ["\n", "\r\n"]) {
+      const text = (line === null ? `${jsonBlock({ verdict, findings: [] })}\nSTYLE: DRIFT` : answer(verdict, line)).replace(/\n/gu, eol);
+      const result = validateReviewAnswer(text, "style", paragraphs);
+      assert.equal(result.ok, true, text);
+      assert.equal(result.value.verdict, verdict, text);
+      assert.deepEqual(result.value.findings, []);
+      assert.deepEqual(result.errors, []);
+      assert.deepEqual(result.warnings, verdict === "DRIFT" ? [] : [disagreement(expectedQuote)], text);
+    }
   }
-  for (const verdict of ["drift", "Drift", "STYLE: DRIFT", "style: drift", "**DRIFT**", "DRIFT.", " DRIFT "]) {
+});
+
+test("accepted JSON verdict formatting uses the full token, including the length boundary", () => {
+  for (const verdict of ["drift", "Drift", "STYLE: DRIFT", "style: drift", "**DRIFT**", "DRIFT.", " DRIFT ",
+    "STYLE = DRIFT", "STYLE → DRIFT", "STYLE -> DRIFT", "STYLE： DRIFT", "STYLE | DRIFT", "STYLE (DRIFT)", "STYLE − DRIFT",
+    "Verdict: DRIFT", "Style verdict: DRIFT", "STYLE REVIEW: DRIFT", "Verdict: STYLE: DRIFT", " ".repeat(200) + "DRIFT",
+    "STYLE:" + " ".repeat(89) + "DRIFT"]) {
     const result = validateReviewAnswer(answer(verdict), "style", paragraphs);
     assert.equal(result.ok, true, verdict);
     assert.equal(result.value.verdict, "DRIFT");
@@ -99,24 +136,64 @@ test("verdict line formatting and placement do not change the JSON verdict", () 
   }
 });
 
-test("disagreeing and unknown verdict lines warn while the JSON verdict records", () => {
-  const result = validateReviewAnswer(answer("CONSISTENT"), "style", paragraphs);
+test("prose and missing verdict lines do not warn", () => {
+  for (const line of ["The style holds throughout.", "Style drift is minimal.", "Intro.\nDRIFT", "Intro.\nSTYLE DRIFT",
+    "## Style review\nThe voice holds.", "A STYLE: DRIFT", "STYLES: DRIFT", "STYLE/DRIFT", "STYLE-DRIFT", ""]) {
+    const result = validateReviewAnswer(answer("CONSISTENT", line), "style", paragraphs);
+    assert.equal(result.ok, true, line);
+    assert.equal(result.value.verdict, "CONSISTENT");
+    assert.deepEqual(result.warnings, [], line);
+  }
+  const result = validateReviewAnswer(`${jsonBlock({ verdict: "CONSISTENT", findings: [] })}\nStyle drift is minimal.`, "style", paragraphs);
   assert.equal(result.ok, true);
-  assert.equal(result.value.verdict, "CONSISTENT");
-  assert.deepEqual(result.warnings, ["The verdict line says DRIFT but the JSON block says CONSISTENT. Weaver recorded CONSISTENT, from the JSON block."]);
-  const unknown = validateReviewAnswer(answer("CONSISTENT", "**STYLE: MOSTLY CONSISTENT**"), "style", paragraphs);
-  assert.equal(unknown.ok, true);
-  assert.equal(unknown.value.verdict, "CONSISTENT");
-  assert.deepEqual(unknown.warnings, ['The verdict line "STYLE: MOSTLY CONSISTENT" does not name CONSISTENT or DRIFT. Weaver recorded CONSISTENT, from the JSON block.']);
+  assert.deepEqual(result.warnings, []);
+});
+
+test("unreadable lines quote the original line when no line names a verdict", () => {
+  for (const line of ["**STYLE: MOSTLY CONSISTENT**", "STYLE: CONSISTENT or DRIFT", "STYLE: DRIFTING", "STYLE: 3DRIFT",
+    "STYLE: DRIFT-extra", "STYLE: DRIFT two passages slip", "Verdict: PASS", "Style - the narration holds up well."]) {
+    const result = validateReviewAnswer(answer("CONSISTENT", line), "style", paragraphs);
+    assert.equal(result.ok, true);
+    assert.equal(result.value.verdict, "CONSISTENT");
+    assert.deepEqual(result.warnings, [unreadable(line)], line);
+  }
+});
+
+test("prose before or after a naming line never decides", () => {
+  for (const [lens, verdict, lines] of [
+    ["style", "CONSISTENT", "# Style — Chapter 3\nSTYLE: CONSISTENT"],
+    ["continuity", "FLAGS", "1. **Continuity:** Mott knows the name.\nCONTINUITY: FLAGS"],
+    ["style", "CONSISTENT", "Style - the narration holds up well.\nSTYLE: CONSISTENT"],
+    ["style", "CONSISTENT", "**STYLE: MOSTLY CONSISTENT**\nVerdict: CONSISTENT"],
+    ["style", "CONSISTENT", "STYLE: CONSISTENT\nThe voice holds.\n## Style drift\nNone found."]
+  ]) {
+    const result = validateReviewAnswer(answer(verdict, lines), lens, paragraphs);
+    assert.equal(result.ok, true);
+    assert.equal(result.value.verdict, verdict);
+    assert.deepEqual(result.warnings, [], lines);
+  }
+});
+
+test("the first disagreement anywhere outside JSON wins over prose and agreeing lines", () => {
+  for (const [lens, text, expected] of [
+    ["continuity", answer("FLAGS", "Continuity - flags appear in two places.\nCONTINUITY: CLEAR"), disagreement("CONTINUITY: CLEAR", "CLEAR", "FLAGS")],
+    ["style", answer("CONSISTENT", "STYLE: CONSISTENT") + "Overall verdict: DRIFT", disagreement("Overall verdict: DRIFT")],
+    ["style", answer("CONSISTENT", "**STYLE: DRIFT**\nVerdict: DRIFT"), disagreement("**STYLE: DRIFT**")]
+  ]) {
+    const result = validateReviewAnswer(text, lens, paragraphs);
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.warnings, [expected]);
+  }
 });
 
 test("only the full lens vocabulary is accepted, with one useful error and no line fallback", () => {
-  for (const verdict of ["MOSTLY CONSISTENT", "MINOR DRIFT", "PASS", "CRITIC: DRIFT", "", undefined, 3, null, "CONSISTENT with notes", "DRIFTING"]) {
+  for (const verdict of ["MOSTLY CONSISTENT", "MINOR DRIFT", "PASS", "CRITIC: DRIFT", "", undefined, 3, null, "CONSISTENT with notes", "DRIFTING",
+    "STYLE-DRIFT", "DRIFT (minor)", "STYLE:" + " ".repeat(90) + "DRIFT"]) {
     const text = answer(verdict, "STYLE: CONSISTENT");
     // Passing undefined to answer uses its default; explicitly omit the field instead.
     const result = validateReviewAnswer(verdict === undefined ? `STYLE: CONSISTENT\n${jsonBlock({ findings: [] })}` : text, "style", paragraphs);
     assert.equal(result.ok, false, String(verdict));
-    assert.deepEqual(result.errors, [`The JSON block's "verdict" must be exactly one of these words: CONSISTENT or DRIFT. This answer gave ${verdict === undefined ? "no verdict" : JSON.stringify(verdict)}.`]);
+    assert.deepEqual(result.errors, [`The JSON block's "verdict" must be exactly one of these words: CONSISTENT or DRIFT. This answer gave ${verdict === undefined ? "no verdict" : quoteForAuthor(JSON.stringify(verdict))}.`]);
     assert.deepEqual(result.warnings, []);
   }
   const lens = { id: "character-audit", verdicts: ["QUIET", "ALERT"] };
@@ -171,22 +248,155 @@ test("the last JSON block supplies exact start and end offsets even when malform
   assert.equal(extractJsonBlock("no block").ok, false);
 });
 
-test("verdict line scanning uses the first labelled line outside the authoritative JSON", () => {
+test("verdict line scanning lists all naming lines outside the authoritative JSON", () => {
   const text = answer("DRIFT", "Preamble.\r\n> 1. **STYLE: CONSISTENT**\r\nSTYLE: DRIFT") + "STYLE: DRIFT\r\n";
   const parsed = extractJsonBlock(text);
-  assert.deepEqual(readVerdictLine(text, { ...STYLE, ...parsed }), { line: "STYLE: CONSISTENT", said: "CONSISTENT", verdict: "CONSISTENT" });
+  assert.deepEqual(verdictLines(text, { ...STYLE, ...parsed }), [
+    { line: "> 1. **STYLE: CONSISTENT**", verdict: "CONSISTENT" },
+    { line: "STYLE: DRIFT", verdict: "DRIFT" }, { line: "STYLE: DRIFT", verdict: "DRIFT" }
+  ]);
   assert.equal(checkVerdict(text, parsed.value, { ...STYLE, ...parsed }).warnings.length, 1);
   const inside = '```json\n{\n"verdict":"DRIFT",\n"findings":[],\n"note":"\nSTYLE: CONSISTENT\n"\n}\n```';
   const offsets = extractJsonBlock(inside);
-  assert.equal(readVerdictLine(inside, { ...STYLE, ...offsets }), null);
+  assert.deepEqual(verdictLines(inside, { ...STYLE, ...offsets }), []);
   const after = `${inside}\r\nSTYLE: DRIFT — a note.\r\nSTYLE: CONSISTENT`;
-  assert.deepEqual(readVerdictLine(after, { ...STYLE, ...offsets }), { line: "STYLE: DRIFT — a note.", said: "DRIFT — a note.", verdict: "DRIFT" });
+  assert.deepEqual(verdictLines(after, { ...STYLE, ...offsets }), [
+    { line: "STYLE: DRIFT — a note.", verdict: "DRIFT" }, { line: "STYLE: CONSISTENT", verdict: "CONSISTENT" }
+  ]);
   for (const line of ["STYLE: MOSTLY CONSISTENT", "STYLE: 3DRIFT", "STYLE: DRIFTING", "STYLE: DRIFT-extra"]) {
     const value = answer("CONSISTENT", line);
-    assert.equal(readVerdictLine(value, { ...STYLE, ...extractJsonBlock(value) }).verdict, null);
+    assert.deepEqual(verdictLines(value, { ...STYLE, ...extractJsonBlock(value) }), [{ line, verdict: null }]);
   }
-  for (const line of ["STYLES: DRIFT", "STYLE DRIFT", "A STYLE: DRIFT"])
-    assert.equal(readVerdictLine(answer("DRIFT", line), { ...STYLE, ...extractJsonBlock(answer("DRIFT", line)) }), null);
+  for (const line of ["STYLES: DRIFT", "Intro.\nSTYLE DRIFT", "A STYLE: DRIFT"])
+    assert.deepEqual(verdictLines(answer("DRIFT", line), { ...STYLE, ...extractJsonBlock(answer("DRIFT", line)) }), []);
+  const cr = answer("CONSISTENT", "Intro.\rSTYLE: DRIFT");
+  assert.deepEqual(verdictLines(cr, { ...STYLE, ...extractJsonBlock(cr) }), [{ line: "STYLE: DRIFT", verdict: "DRIFT" }]);
+});
+
+test("exact vocabulary spelling wins, and only a unique normalised spelling can match", () => {
+  for (const [verdicts, value, line, expected, warning] of [
+    [["DONE_", "OPEN"], "DONE_", "TONE: DONE_", "DONE_"],
+    [["DONE_", "OPEN"], "done", "TONE: DONE_", "DONE_"],
+    [["DONE_", "OPEN"], "OPEN", "TONE: DONE_", "OPEN", disagreement("TONE: DONE_", "DONE_", "OPEN")],
+    [["OK__", "NO"], "OK__", "TONE: OK__", "OK__"],
+    [["A-_B", "C"], "A-_B", "TONE: A-_B", "A-_B"],
+    [["OK-_GO", "STOP"], "OK-_GO", "TONE: OK-_GO", "OK-_GO"],
+    [["ok", "OK"], "OK", "TONE: OK", "OK"], [["ok", "OK"], "ok", "TONE: ok", "ok"],
+    [["ok", "OK"], "OK", "TONE: ok", "OK", disagreement("TONE: ok", "ok", "OK")],
+    [["Pass", "PASS"], "PASS", "TONE: PASS", "PASS"], [["Pass", "PASS"], "Pass", "TONE: Pass", "Pass"],
+    [["TONE-ALERT", "CLEAR"], "TONE-ALERT", "TONE-ALERT", "TONE-ALERT"]
+  ]) {
+    const result = validateReviewAnswer(answer(value, line), { id: "tone", verdicts }, paragraphs);
+    assert.equal(result.ok, true, `${verdicts}: ${value}`);
+    assert.equal(result.value.verdict, expected);
+    assert.deepEqual(result.warnings, warning ? [warning] : []);
+  }
+  for (const [verdicts, verdict] of [[["ok", "OK"], "Ok"], [["Pass", "PASS"], "pass"]]) {
+    const result = validateReviewAnswer(answer(verdict, ""), { id: "tone", verdicts }, paragraphs);
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.length, 1);
+    assert.ok(result.errors[0].includes(verdictWords(verdicts)));
+  }
+  const ambiguous = validateReviewAnswer(answer("OK", "TONE: Ok"), { id: "tone", verdicts: ["ok", "OK"] }, paragraphs);
+  assert.deepEqual(ambiguous.warnings, ['The verdict line "TONE: Ok" does not name ok or OK. Weaver recorded OK, from the JSON block.']);
+  const flags = validateReviewAnswer(answer("CLEAR", "FLAGS: CLEAR"), { id: "flags", verdicts: ["CLEAR", "FLAGS"] }, paragraphs);
+  assert.equal(flags.ok, true);
+  assert.deepEqual(flags.warnings, []);
+  const sameLabel = validateReviewAnswer(answer("FLAGS: FLAGS", "FLAGS: FLAGS"), { id: "flags", verdicts: ["CLEAR", "FLAGS"] }, paragraphs);
+  assert.equal(sameLabel.ok, true);
+  assert.equal(sameLabel.value.verdict, "FLAGS");
+  assert.deepEqual(sameLabel.warnings, []);
+  for (const value of ["Character audit: ALERT", "Final Character audit lens verdict => ALERT", "Verdict: Character audit: ALERT"]) {
+    const result = validateReviewAnswer(answer(value, "Character audit: ALERT"), { id: "character-audit", verdicts: ["QUIET", "ALERT"] }, paragraphs);
+    assert.equal(result.ok, true, value);
+    assert.equal(result.value.verdict, "ALERT");
+    assert.deepEqual(result.warnings, []);
+  }
+  assert.equal(canonicalVerdict("Verdict: drift", { verdicts: ["DRIFT"] }), "DRIFT");
+});
+
+function reviewer(root, id, verdicts) {
+  mkdirSync(join(root, "quality", "reviewers"), { recursive: true });
+  writeFileSync(join(root, "quality", "reviewers", `${id}.md`), `---\nid: ${id}\ntitle: Tone\nverdicts: [${verdicts.join(", ")}]\nqueue: top-2\n---\nRead for changes in tone.\n`);
+}
+
+test("book reviewers reject only colliding normalised vocabularies with a named warning", (t) => {
+  const root = temporaryRoot(t);
+  const colliding = [["ok", "OK"], ["Pass", "PASS"], ["FINE_", "FINE"], ["A-B", "A-_B"], ["OK__", "ok"]];
+  const accepted = [["DONE_", "OPEN"], ["FINE_", "SLOW_"], ["NEEDS_WORK", "FINE"], ["NEEDS_WORK", "NEEDS__WORK"], ["QUIET", "ALERT"], ["CLEAR", "FLAGS"]];
+  colliding.forEach((words, index) => { reviewer(root, `collision-${index}`, words); assert.equal(verdictKey(words[0]), verdictKey(words[1])); });
+  accepted.forEach((words, index) => { reviewer(root, `accepted-${index}`, words); assert.notEqual(verdictKey(words[0]), verdictKey(words[1])); });
+  const warnings = [];
+  const lenses = listLenses(root, { onWarning: (warning) => warnings.push(warning) });
+  assert.deepEqual(lenses.filter((lens) => !lens.builtin).map((lens) => lens.verdicts), accepted);
+  assert.deepEqual(warnings, colliding.map((_, index) => `quality/reviewers/collision-${index}.md: verdicts must contain two words that differ by more than capital letters or underscores at their edges; reviewer skipped`));
+});
+
+test("book reviewers record exact edge underscores without repair and queue a canonical second verdict", async (t) => {
+  const { root, project } = book(t);
+  reviewer(root, "tone", ["DONE_", "OPEN"]);
+  let packet = buildReviewPacket(root, project, 1, "tone");
+  const exact = await submitReviewPacket(root, project, packet, answer("DONE_", "TONE: DONE_"), { host: async () => assert.fail("unexpected host call") });
+  assert.equal(exact.ok, true);
+  assert.equal(exact.record.verdict, "DONE_");
+  assert.equal(Object.hasOwn(exact.record, "warnings"), false);
+  reviewer(root, "tone", ["QUIET", "ALERT"]);
+  packet = buildReviewPacket(root, project, 1, "tone");
+  const craft = { ...finding, severity: "craft" };
+  const queued = await submitReviewPacket(root, project, packet, answer("alert", "TONE: ALERT", [craft]), { host: async () => assert.fail("unexpected host call") });
+  assert.equal(queued.ok, true);
+  assert.equal(queued.record.verdict, "ALERT");
+  const collected = collectFindings(root, project, { chapter: 1, all: true });
+  const items = collected.findings.filter((item) => item.source === "tone");
+  assert.equal(items.length, 1);
+  assert.equal(items[0].queued, true);
+  assert.equal(items[0].quote, craft.quote);
+  assert.equal(collected.notes.some((item) => item.source === "tone"), false);
+});
+
+test("author quotes scrub controls and invisible characters and truncate by code point", () => {
+  const codes = [...Array.from({ length: 32 }, (_, i) => i), ...Array.from({ length: 33 }, (_, i) => 127 + i),
+    ...Array.from({ length: 5 }, (_, i) => 0x200b + i), 0x2028, 0x2029, ...Array.from({ length: 5 }, (_, i) => 0x202a + i),
+    ...Array.from({ length: 10 }, (_, i) => 0x2060 + i), 0xfeff];
+  for (const code of codes) assert.equal(quoteForAuthor(`a${String.fromCodePoint(code)}b`), "a b", code.toString(16));
+  assert.equal(quoteForAuthor("  a\t\n b  "), "a b");
+  assert.equal(quoteForAuthor(12), "12");
+  assert.equal(quoteForAuthor("x".repeat(120)), "x".repeat(120));
+  assert.equal(quoteForAuthor("x".repeat(121)), "x".repeat(119) + "…");
+  assert.equal(quoteForAuthor("x".repeat(118) + "😀yz"), "x".repeat(118) + "😀…");
+  assert.equal(quoteForAuthor("x".repeat(119) + "😀"), "x".repeat(119) + "😀");
+});
+
+test("verdicts and warnings are bounded, fast and safe to print", () => {
+  for (const value of [".".repeat(40000) + "x", "x" + ".".repeat(40000)]) {
+    const start = performance.now();
+    assert.equal(canonicalVerdict(value, STYLE), null);
+    assert.ok(performance.now() - start < 100);
+  }
+  const keyStart = performance.now();
+  assert.equal(verdictKey(".".repeat(40000) + "x"), ".".repeat(40000) + "x");
+  assert.equal(verdictKey("x" + ".".repeat(40000)), "x");
+  assert.ok(performance.now() - keyStart < 100);
+  const start = performance.now();
+  const long = validateReviewAnswer(answer("CONSISTENT", `STYLE: MOSTLY ${"x".repeat(200000)}`), "style", paragraphs);
+  assert.ok(performance.now() - start < 1000);
+  assert.equal(long.ok, true);
+  assert.equal(long.warnings.length, 1);
+  assert.ok(long.warnings[0].length <= 300);
+  assert.ok(long.warnings[0].includes("…"));
+  const unsafe = "STYLE: MOSTLY \u001b[2J \u001b]0;unsafe\u0007 \u009b";
+  const safe = validateReviewAnswer(answer("CONSISTENT", unsafe), "style", paragraphs);
+  assert.equal(safe.ok, true);
+  assert.deepEqual(safe.warnings, [unreadable("STYLE: MOSTLY [2J ]0;unsafe")]);
+  assert.doesNotMatch(safe.warnings[0], /[\u0000-\u001F\u007F-\u009F]/u);
+  const object = validateReviewAnswer(answer({ blob: "y".repeat(50000) }), "style", paragraphs);
+  assert.equal(object.ok, false);
+  assert.equal(object.errors.length, 1);
+  assert.ok(object.errors[0].length <= 400);
+  assert.ok(object.errors[0].includes("…"));
+  const beyond = answer("CONSISTENT", `${" ".repeat(300)}STYLE: DRIFT`);
+  assert.deepEqual(validateReviewAnswer(beyond, "style", paragraphs).warnings, []);
+  assert.equal(canonicalVerdict("STYLE\u200b:\u009bDRIFT…)]", STYLE), "DRIFT");
 });
 
 test("JSON object and findings-array checks remain required and carry empty warnings", () => {
@@ -306,14 +516,14 @@ test("invalid review command and submit name the saved answer", (t) => {
   const ran = cli(root, ["review", "--chapter", "1", "--lenses", "style", "--run"]);
   assert.equal(ran.status, 0, ran.stdout + ran.stderr);
   assert.match(ran.stdout, /Chapter 1 style: answer invalid after repair:/u);
-  assert.ok(ran.stdout.includes(` (Weaver saved the answer in ${answerFile(packet)})`));
+  assert.ok(ran.stdout.includes(savedAnswerNote(root, answerFile(packet))));
   assert.equal(existsSync(join(root, answerFile(packet))), true);
   const path = join(root, "answer.txt");
   writeFileSync(path, answer("PASS"));
   const submitted = cli(root, ["submit", packet.id, "--file", path]);
   assert.equal(submitted.status, 1, submitted.stdout + submitted.stderr);
   assert.ok(submitted.stdout.includes(`Packet ${packet.id}: answer invalid after repair:`));
-  assert.ok(submitted.stdout.includes(` (Weaver saved the answer in ${answerFile(packet)})`));
+  assert.ok(submitted.stdout.includes(savedAnswerNote(root, answerFile(packet))));
 });
 
 test("shared repair passes warnings from the returned answer and keeps existing diagnostics", async (t) => {
@@ -391,6 +601,105 @@ test("diagnostic write errors cannot break validation or repair", async (t) => {
   }
 });
 
+test("saved answer notes resolve against the book root and omit absent paths", () => {
+  const relative = ".weaver/packets/abcdef123456.answer.txt";
+  assert.equal(savedAnswerNote(ROOT, relative), ` (Weaver saved the answer in ${resolve(ROOT, relative)})`);
+  assert.equal(savedAnswerNote(null, relative), ` (Weaver saved the answer in ${relative})`);
+  assert.equal(savedAnswerNote(1, relative), ` (Weaver saved the answer in ${relative})`);
+  for (const missing of [null, undefined, ""]) assert.equal(savedAnswerNote(ROOT, missing), "");
+});
+
+test("submitting the diagnostic itself preserves author bytes, including aliases and Windows case", async (t) => {
+  const root = temporaryRoot(t);
+  const packet = buildPacket("FUTURE", "item", "Generic prompt", {}, "generic-1");
+  const path = join(root, answerFile(packet));
+  const authored = "  Author's edit\r\n  \n";
+  writeTextRecord(path, authored);
+  const alias = join(root, "linked-packets");
+  symlinkSync(join(root, ".weaver", "packets"), alias, process.platform === "win32" ? "junction" : "dir");
+  const paths = [path, join(alias, `${packet.id}.answer.txt`)];
+  if (process.platform === "win32") paths.push(path.toUpperCase());
+  for (const answerPath of paths) {
+    const result = await validateAndRepair(root, {}, packet, authored, () => ["invalid"], { answerPath, host: async () => response("failed repair") });
+    assert.equal(result.ok, false);
+    assert.equal(Object.hasOwn(result, "answer_file"), false);
+    assert.equal(readFileSync(path, "utf8"), authored);
+  }
+  const result = await validateAndRepair(root, {}, packet, authored, () => ["invalid"], { answerPath: join(root, "other.txt"), host: async () => response("latest failed repair\r\n") });
+  assert.equal(result.ok, false);
+  assert.equal(result.answer_file, answerFile(packet));
+  assert.equal(readFileSync(path, "utf8"), "latest failed repair\r\n");
+});
+
+test("resolved diagnostic paths are protected even before the file exists", async (t) => {
+  const root = temporaryRoot(t);
+  const packet = buildPacket("FUTURE", "item", "Generic prompt", {}, "generic-1");
+  const path = join(root, answerFile(packet));
+  // Windows paths differ only in letter case; resolved paths must still compare equal there.
+  for (const answerPath of process.platform === "win32" ? [path, path.toUpperCase()] : [path]) {
+    const result = await validateAndRepair(root, {}, packet, "author text", () => ["invalid"], { answerPath, host: async () => response("failed repair") });
+    assert.equal(result.ok, false);
+    assert.equal(Object.hasOwn(result, "answer_file"), false);
+    assert.equal(existsSync(path), false);
+  }
+});
+
+for (const kind of ["REVIEW", "STATE", "REPAIR"]) test(`CLI ${kind} submit preserves an edited diagnostic file`, async (t) => {
+  const { root, project } = kind === "REPAIR" ? makeBook(t) : book(t, "invalid");
+  project.host = { command: process.execPath, args: [ANSWER_HOST, "invalid"], timeout_seconds: 10 };
+  writeFileSync(join(root, "project.json"), JSON.stringify(project));
+  let packet;
+  if (kind === "REVIEW") {
+    packet = buildReviewPacket(root, project, 1, "style");
+    writeTextRecord(join(root, ".weaver", "packets", `${packet.id}.json`), JSON.stringify(packet));
+  } else if (kind === "STATE") packet = buildStatePacket(root, project, "1-1");
+  else packet = (await repairChapter(root, project, { chapter: 1, onProgress() {} })).packet;
+  const path = join(root, answerFile(packet));
+  const authored = "  Author's invalid edited answer\r\n  ";
+  writeFileSync(path, authored);
+  const submitted = cli(root, ["submit", packet.id, "--file", path]);
+  assert.equal(submitted.status, 1, submitted.stdout + submitted.stderr);
+  assert.match(submitted.stdout, /answer invalid after repair/u);
+  assert.equal(readFileSync(path, "utf8"), authored);
+  assert.doesNotMatch(submitted.stdout, /Weaver saved the answer in/u);
+});
+
+test("failed diagnostic replacement cleans temporary files without losing the validation result", async (t) => {
+  const root = temporaryRoot(t);
+  const packet = buildPacket("FUTURE", "item", "Generic prompt", {}, "generic-1");
+  const directory = join(root, ".weaver", "packets");
+  mkdirSync(join(root, answerFile(packet)), { recursive: true });
+  const result = await validateAndRepair(root, {}, packet, "first", () => ["invalid"], { host: async () => response("last") });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.errors, ["invalid"]);
+  assert.equal(result.answerText, "last");
+  assert.equal(Object.hasOwn(result, "answer_file"), false);
+  assert.deepEqual(readdirSync(directory).filter((name) => name.endsWith(".tmp")), []);
+  const destination = join(root, "directory");
+  mkdirSync(destination);
+  assert.throws(() => writeTextRecord(destination, "text"));
+  assert.deepEqual(readdirSync(root).filter((name) => name.endsWith(".tmp")), []);
+});
+
+test("bounded verdict errors stay bounded in the repair prompt and safe warnings persist", async (t) => {
+  const { root, project } = book(t);
+  const packet = buildReviewPacket(root, project, 1, "style");
+  const repaired = answer("CONSISTENT", "STYLE: DRIFT\u001b[2J\u001b]0;unsafe\u0007\u009b");
+  let calls = 0;
+  const result = await submitReviewPacket(root, project, packet, answer({ blob: "y".repeat(50000) }), { host: async (_root, _project, prompt) => {
+    calls++;
+    assert.ok(prompt.length - packet.prompt.length < 500);
+    assert.ok(prompt.includes("…"));
+    return response(repaired);
+  } });
+  assert.equal(calls, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.record.warnings.length, 1);
+  const stored = JSON.parse(readFileSync(reviewRecordPath(root, 1, "style"), "utf8"));
+  assert.deepEqual(stored.warnings, [disagreement("STYLE: DRIFT [2J ]0;unsafe")]);
+  assert.doesNotMatch(stored.warnings[0], /[\u0000-\u001F\u007F-\u009F]/u);
+});
+
 test("STATE saves the exact malformed first answer and still records the scene", async (t) => {
   const { root, project } = book(t, "malformed-once", join(ROOT, "test", "fixtures", "fake-host.mjs"));
   const units = [];
@@ -409,7 +718,7 @@ test("STATE failures surface the saved path in progress, units, and submit", asy
   const packet = readPackets(root).find((item) => item.kind === "STATE");
   assert.equal(units[0].status, "failed");
   assert.equal(units[0].answer_file, answerFile(packet));
-  assert.ok(progress.some((line) => line.includes(` (Weaver saved the answer in ${answerFile(packet)})`)));
+  assert.ok(progress.some((line) => line.includes(savedAnswerNote(root, answerFile(packet)))));
   const result = await submitStatePacket(root, project, packet.id, "broken JSON");
   assert.equal(result.ok, false);
   assert.equal(result.answer_file, answerFile(packet));
@@ -417,7 +726,7 @@ test("STATE failures surface the saved path in progress, units, and submit", asy
   writeFileSync(path, "broken JSON");
   const submitted = cli(root, ["submit", packet.id, "--file", path]);
   assert.equal(submitted.status, 1, submitted.stdout + submitted.stderr);
-  assert.ok(submitted.stdout.includes(` (Weaver saved the answer in ${answerFile(packet)})`));
+  assert.ok(submitted.stdout.includes(savedAnswerNote(root, answerFile(packet))));
 });
 
 test("REPAIR saves a malformed attempt even when its proposal is ready", async (t) => {
@@ -431,16 +740,25 @@ test("failed REPAIR proposals and submit carry the saved answer path", async (t)
   const { root, project } = makeBook(t);
   project.host = { command: process.execPath, args: [ANSWER_HOST, "invalid"], timeout_seconds: 10 };
   writeFileSync(join(root, "project.json"), JSON.stringify(project));
-  const record = await repairChapter(root, project, { chapter: 1, run: true, host: async () => response("broken JSON"), onProgress() {} });
+  const progress = [];
+  const record = await repairChapter(root, project, { chapter: 1, run: true, host: async () => response("broken JSON"), onProgress: (line) => progress.push(line) });
   assert.equal(record.status, "failed");
   assert.equal(record.answer_file, answerFile({ id: record.packet_id }));
   assert.equal(readFileSync(join(root, record.answer_file), "utf8"), "broken JSON");
+  assert.ok(progress[0].split("\n")[0].endsWith(savedAnswerNote(root, record.answer_file)));
+  assert.ok(proposalSummary(record).split("\n")[0].endsWith(savedAnswerNote(null, record.answer_file)));
+  const proposals = cli(root, ["proposals"]);
+  assert.equal(proposals.status, 0, proposals.stdout + proposals.stderr);
+  assert.ok(proposals.stdout.split("\n")[0].endsWith(savedAnswerNote(root, record.answer_file)));
+  const repair = cli(root, ["repair", "--chapter", "1", "--run"]);
+  assert.equal(repair.status, 1, repair.stdout + repair.stderr);
+  assert.ok(repair.stdout.split("\n")[0].endsWith(savedAnswerNote(root, record.answer_file)));
   const path = join(root, "answer.txt");
   writeFileSync(path, "broken JSON");
   const submitted = cli(root, ["submit", record.packet_id, "--file", path]);
   assert.equal(submitted.status, 1, submitted.stdout + submitted.stderr);
   assert.ok(submitted.stdout.includes(`Packet ${record.packet_id}: answer invalid after repair:`));
-  assert.ok(submitted.stdout.includes(` (Weaver saved the answer in ${record.answer_file})`));
+  assert.ok(submitted.stdout.includes(savedAnswerNote(root, record.answer_file)));
 });
 
 test("whole-book review units and progress carry JSON verdict warnings", async (t) => {
@@ -476,3 +794,95 @@ test("whole-book invalid review units carry saved paths and omit empty warnings"
     assert.equal(Object.hasOwn(unit, "warnings"), false);
   }
 });
+
+test("whole-book failed reviews and repair retain absolute progress notes and summary paths", async (t) => {
+  const { root, project } = makeBook(t);
+  project.host.timeout_seconds = 10;
+  const progress = [];
+  const host = async (bookRoot, configuration, prompt, options) => /^# (REVIEW|REPAIR)/u.test(prompt)
+    ? response("broken JSON") : runHost(bookRoot, configuration, prompt, options);
+  const result = await runBook(root, project, { run: true, host, onProgress: (line) => progress.push(line), sleep: async () => {} });
+  const reviews = result.units.filter((unit) => unit.unit.includes(" review "));
+  assert.equal(reviews.length, 6);
+  const repair = result.units.find((unit) => unit.unit === "chapter 1 repair");
+  for (const unit of [...reviews, repair]) {
+    assert.equal(unit.status, "failed", unit.unit);
+    assert.match(unit.answer_file, /^\.weaver\/packets\/[a-f0-9]{12}\.answer\.txt$/u);
+    assert.equal(readFileSync(join(root, unit.answer_file), "utf8"), "broken JSON");
+    assert.ok(progress.includes(`${unit.unit}: failed: ${unit.error}${savedAnswerNote(root, unit.answer_file)}`));
+    assert.deepEqual(result.summary.failures.find((failure) => failure.unit === unit.unit), { unit: unit.unit, error: unit.error, answer_file: unit.answer_file });
+  }
+  const recorded = JSON.parse(readFileSync(result.path, "utf8"));
+  assert.deepEqual(recorded.summary.failures, result.summary.failures);
+});
+
+test("CLI whole-book final failure lines name absolute saved paths with a separate book root", (t) => {
+  const { root } = book(t, "invalid");
+  const result = cli(root, ["run", "--book", "--run"]);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  const finalLines = result.stdout.slice(result.stdout.indexOf("Book run finished:"));
+  const packets = readPackets(root).filter((packet) => packet.kind === "REVIEW");
+  assert.ok(packets.length >= 3);
+  for (const packet of packets) {
+    const [chapter, lens] = packet.target.split(":");
+    assert.ok(finalLines.split("\n").some((line) => line.startsWith(`chapter ${chapter} review ${lens}: `) && line.endsWith(savedAnswerNote(root, answerFile(packet)))), finalLines);
+  }
+});
+
+const stateHeadings = ["Newly established", "Character deltas", "Active threads", "Timeline and location", "Closing image"];
+const stateRecord = (format, eol = "\n") => `# Scene 1-1${eol}${eol}${stateHeadings.map((heading) =>
+  `${format(heading)}${eol}  Pellam waits. Keep *this* and __that__ exactly.\t${eol}`).join(eol)}`;
+
+for (const style of ["## **H**", "### H", "# H:", "## H:", "**H**", "__H:__", "H", "## `H`", "## __H__", "###### H"]) {
+  test(`STATE normalises only missing decorated headings: ${style}`, async (t) => {
+    const { root, project } = book(t);
+    const eol = style === "__H:__" ? "\r\n" : "\n";
+    const text = stateRecord((heading) => style.replace("H", heading), eol) + jsonBlock({ facts: [] });
+    let calls = 0;
+    const units = [];
+    await bootstrapState(root, project, { run: true, sceneIds: ["1-1"], host: async () => { calls++; return response(text); }, onProgress() {}, onUnit: (unit) => units.push(unit) });
+    assert.equal(calls, 1);
+    assert.equal(units[0].status, "recorded");
+    const stored = readFileSync(join(root, "narrative-state", "1-1.md"), "utf8");
+    assert.equal(stored, stateRecord((heading) => `## ${heading}`, eol).trim() + "\n");
+    for (const heading of stateHeadings) assert.ok(stored.split(/\r\n|\n/u).includes(`## ${heading}`));
+  });
+}
+
+for (const eol of ["\n", "\r\n"]) test(`STATE already-valid records retain their original bytes: ${JSON.stringify(eol)}`, async (t) => {
+  const { root, project } = book(t);
+  const record = stateRecord((heading) => `## ${heading}`, eol);
+  const text = `  ${eol}${record}${eol}${jsonBlock({ facts: [] })}`;
+  let calls = 0;
+  const units = [];
+  await bootstrapState(root, project, { run: true, sceneIds: ["1-1"], host: async () => { calls++; return response(text); }, onProgress() {}, onUnit: (unit) => units.push(unit) });
+  assert.equal(calls, 1);
+  assert.equal(units[0].status, "recorded");
+  assert.equal(readFileSync(join(root, "narrative-state", "1-1.md"), "utf8"), text.slice(0, extractJsonBlock(text).start).trim() + "\n");
+});
+
+test("STATE rewrites only headings that failed the original check, with mixed endings intact", async (t) => {
+  const { root, project } = book(t);
+  const record = "## newly established\r\nKeep this.\n**Newly established**\r\n" +
+    stateHeadings.slice(1).map((heading) => ` **${heading.toUpperCase()}:** \rKeep this too.\n`).join("");
+  const expected = "## newly established\r\nKeep this.\n**Newly established**\r\n" +
+    stateHeadings.slice(1).map((heading) => `## ${heading}\rKeep this too.\n`).join("");
+  const packet = buildStatePacket(root, project, "1-1");
+  const result = await submitStatePacket(root, project, packet.id, record + jsonBlock({ facts: [] }), { host: async () => assert.fail("unexpected repair") });
+  assert.equal(result.ok, true);
+  assert.equal(readFileSync(join(root, "narrative-state", "1-1.md"), "utf8"), expected.trim() + "\n");
+});
+
+for (const invalid of ["## Newly established facts", "- Newly established", "1. Newly established", "####### Newly established"]) {
+  test(`STATE still rejects non-headings after repair: ${invalid}`, async (t) => {
+    const { root, project } = book(t);
+    const text = stateRecord((heading) => heading === "Newly established" ? invalid : `## ${heading}`) + jsonBlock({ facts: [] });
+    let calls = 0;
+    const units = [];
+    await bootstrapState(root, project, { run: true, sceneIds: ["1-1"], host: async () => { calls++; return response(text); }, onProgress() {}, onUnit: (unit) => units.push(unit) });
+    assert.equal(calls, 2);
+    assert.equal(units[0].status, "failed");
+    assert.equal(units[0].error, "missing required heading: Newly established");
+    assert.equal(existsSync(join(root, "narrative-state", "1-1.md")), false);
+  });
+}

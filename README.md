@@ -263,13 +263,28 @@ also reports out-of-date reviews. Every finding has a stable ID.
 
 ## When an AI answer does not fit
 
-Weaver records the verdict from the JSON block. The verdict line can use bold,
-other capitals or punctuation, or be left out. If the line and the JSON block
-disagree, Weaver records the JSON verdict and adds a warning to the review record
-and command output. A verdict outside the reviewer's words gets one repair round
-that names the allowed words. Quotes are still checked word for word.
-The latest failed answer is kept in `.weaver/packets/<packet-id>.answer.txt`
-so you can inspect what went wrong.
+Weaver records the verdict from the review's JSON block. It must be one of the
+reviewer's words, but it may carry the reviewer's label (`STYLE: CONSISTENT`),
+bold, other capitals or trailing punctuation. Anything else, such as
+`MOSTLY CONSISTENT`, gets one repair round that names the allowed words. Quotes
+are still checked word for word.
+
+Weaver also reads the verdict lines around the JSON block, such as
+`STYLE: DRIFT`, `**Style verdict:** drift` or `Verdict: DRIFT`, including
+headings, list items and table rows, with `:`, `-`, `=` or `→` between label and
+word. The answer's first line may also be just the word, or the label and the
+word. If any such line names a different word, Weaver records the JSON verdict
+and adds a warning to the review record and the command output. A line that
+looks like a verdict line but names none of the words, such as
+`STYLE: MOSTLY CONSISTENT`, also gets a warning. A missing verdict line is fine.
+State answers may write their required headings as `### Heading`, `**Heading**`
+or `## Heading:`; Weaver stores them as `## Heading`.
+
+The latest failed answer to a packet stays in
+`.weaver/packets/<packet-id>.answer.txt`, even after a later answer succeeds,
+and failure messages give its full path. To try a corrected answer, edit that
+file and submit it with `weaver submit <packet-id> --file <that file>`; Weaver
+leaves the file you submitted exactly as you wrote it.
 
 ## Rulings
 
@@ -457,7 +472,8 @@ unquoted values and `#` comments, between `---` lines. No nested YAML or
 multiline values are supported. `id`, `title`, `verdicts`, and `queue` are
 required; ids are kebab-case, match the filename, and cannot replace a built-in.
 The two distinct verdict words use letters, digits, underscores or hyphens and
-start with a letter; the first means nothing to report. `context` is any subset
+start with a letter; the first means nothing to report. They must differ by more
+than capital letters or underscores at their edges. `context` is any subset
 of the five keys shown, defaults to `[world-bible]`, and can be `[]`.
 The registry and chapter reader text are always included. `world-bible` reads
 top-level Markdown notes, excluding voice profiles and unchanged starters;

@@ -7,7 +7,7 @@ import { loadCharacters } from "./characters.mjs";
 import { runHostBatch } from "./host.mjs";
 import { GENERATOR, SCHEMA_BASE } from "./identity.mjs";
 import { countWords, loadScenes, sha256 } from "./manuscript.mjs";
-import { buildPacket, checkVerdict, extractJsonBlock, validateAndRepair } from "./packets.mjs";
+import { buildPacket, checkVerdict, extractJsonBlock, savedAnswerNote, validateAndRepair } from "./packets.mjs";
 import { readerText } from "./prose.mjs";
 import { factsLedgerPath, statePath } from "./state.mjs";
 import { listLenses } from "./reviewers.mjs";
@@ -219,7 +219,7 @@ export async function runReview(root, project, { chapter, lenses, run = false, o
     const response = responses[index];
     if (!response.ok) { onProgress(`Chapter ${chapter} ${lens}: host error: ${response.error}`); continue; }
     const result = await recordAnswer(root, project, Number(chapter), lens, packet, inputs, response.text);
-    onProgress(result.ok ? `Chapter ${chapter} ${lens}: recorded (${result.record.findings.length} findings, ${result.record.dropped_findings} dropped)` : `Chapter ${chapter} ${lens}: answer invalid after repair: ${result.errors[0]}${result.answer_file ? ` (Weaver saved the answer in ${result.answer_file})` : ""}`);
+    onProgress(result.ok ? `Chapter ${chapter} ${lens}: recorded (${result.record.findings.length} findings, ${result.record.dropped_findings} dropped)` : `Chapter ${chapter} ${lens}: answer invalid after repair: ${result.errors[0]}${savedAnswerNote(root, result.answer_file)}`);
     for (const warning of result.record?.warnings || []) onProgress(`Chapter ${chapter} ${lens}: warning: ${warning}`);
   }
 }
