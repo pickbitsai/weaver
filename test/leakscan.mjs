@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
-const TEXT_EXT = new Set([".mjs", ".js", ".json", ".md", ".txt", ".yml", ".yaml", ""]);
+const TEXT_EXT = new Set([".mjs", ".js", ".json", ".md", ".txt", ".yml", ".yaml", ".ps1", ".sh", ""]);
 const SKIP_DIRS = new Set(["node_modules", ".git"]);
 const RULES = [
   { id: "abs-win-path", re: /[A-Za-z]:\\(?:new|Users)\b/i, note: "absolute Windows path" },

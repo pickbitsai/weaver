@@ -16,7 +16,7 @@ if (args[0] === "app-server") {
     if (request.method === "hooks/list") {
       const root = request.params.cwds[0], path = join(root, ".codex", "hooks.json");
       const settings = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
-      result = { data: [{ cwd: root, errors: [], warnings: [], hooks: Object.entries(settings.hooks || {}).flatMap(([event, entries]) => entries.flatMap((entry) => entry.hooks.map((hook) => ({ command: hook.command, eventName: event[0].toLowerCase() + event.slice(1), matcher: entry.matcher, sourcePath: path, enabled: true, trustStatus: "trusted" })))) }] };
+      result = { data: [{ cwd: root, errors: [], warnings: [], hooks: Object.entries(settings.hooks || {}).flatMap(([event, entries]) => entries.flatMap((entry) => entry.hooks.map((hook) => ({ command: hook.command, eventName: event[0].toLowerCase() + event.slice(1), matcher: entry.matcher, sourcePath: path, enabled: true, trustStatus: process.env.WEAVER_FAKE_CODEX_TRUST || "trusted" })))) }] };
     }
     if (request.method === "config/read") result = { config: { features: { hooks: true } } };
     console.log(JSON.stringify({ id: request.id, result }));

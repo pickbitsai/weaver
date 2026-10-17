@@ -87,6 +87,44 @@ npx weaver status --root ./my-book
 npx weaver grounding 1-1 --root ./my-book
 ```
 
+## Setting up a new computer
+
+Authors start with [docs/START-HERE.md](docs/START-HERE.md): what to install,
+where the book lives, the one-time steps for each AI, backup, the daily loop,
+what never to do, and the words the author page uses.
+
+PickBits runs the setup script with the author, in the author's own terminal:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-book.ps1 -Source <package> -Id my-book -Title "My Book"
+```
+
+```sh
+sh scripts/setup-book.sh --source <package> --id my-book --title "My Book"
+```
+
+`setup-book.ps1` runs in Windows PowerShell 5.1 or later. `setup-book.sh` is POSIX
+`sh` for macOS (bash or zsh) and Linux. Both take the same options: the tool
+folder (`-ToolFolder`, `--tool-folder`; default `Weaver` in the home folder), the
+book folder (`-BookFolder`, `--book-folder`; default the tool folder plus the id),
+the package source (`-Source`, `--source`: a registry spec, a GitHub tag URL or a
+local `.tgz`; optional once Weaver is installed), and a new book's id and title.
+The book folder must be inside the tool folder, because the hooks find Weaver by
+looking in the folders above the book.
+
+Before writing anything, the script checks for Node.js 22 or newer, npm and Git,
+warns when neither `codex` nor `claude` is on PATH, and refuses: folders in
+OneDrive, Dropbox, iCloud Drive or Google Drive; a book folder outside the tool
+folder; a non-empty folder that is not a Weaver book; and a run from inside an AI
+session. It then installs Weaver in the tool folder, creates the book with
+`weaver init --empty` (or uses the existing book), runs
+`weaver hooks install --host both`, and runs `scripts/setup-guide.mjs`, which
+reads `weaver doctor` and prints the remaining one-time steps in plain words:
+folder trust, Codex `/hooks` trust, backup with
+`weaver backup setup --remote <url>`, and the hand-over seal. It exits 0 when only
+those steps remain. Running it again changes nothing that is already in place,
+and it never edits either host's global configuration.
+
 ## The studio
 
 Start the local author page with `weaver studio --root ./my-book`. It listens
