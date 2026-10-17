@@ -391,8 +391,8 @@ export async function bootstrapState(root, project, { through = null, sceneIds =
     }
     const answer = await validateAndRepair(root, project, packet, hostResult.text, (answerText) => validateStateAnswer(scene, root, answerText), { host });
     if (!answer.ok) {
-      onProgress(`Scene ${scene.id}: answer invalid after repair: ${answer.errors[0]}`);
-      onUnit({ status: "failed", scene: scene.id, error: answer.host_error || answer.errors.join("; ") });
+      onProgress(`Scene ${scene.id}: answer invalid after repair: ${answer.errors[0]}${answer.answer_file ? ` (Weaver saved the answer in ${answer.answer_file})` : ""}`);
+      onUnit({ status: "failed", scene: scene.id, error: answer.host_error || answer.errors.join("; "), ...(answer.answer_file ? { answer_file: answer.answer_file } : {}) });
       continue;
     }
     writeStateAnswer(root, project, scene, packet, answer);
@@ -420,7 +420,7 @@ export async function submitStatePacket(root, project, packetId, answerText) {
     return { ok: false, errors: ["packet is stale because the scene prose changed"], packet };
   }
   const answer = await validateAndRepair(root, project, packet, answerText, (value) => validateStateAnswer(scene, root, value));
-  if (!answer.ok) return { ok: false, errors: answer.errors, packet };
+  if (!answer.ok) return { ok: false, errors: answer.errors, packet, ...(answer.answer_file ? { answer_file: answer.answer_file } : {}) };
   writeStateAnswer(root, project, scene, packet, answer);
   buildFactsLedger(root, project);
   return { ok: true, scene_id: scene.id, facts: answer.value.facts.length, packet };

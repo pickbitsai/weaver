@@ -261,6 +261,16 @@ remain notes, visible with `weaver findings --all`. At most six review findings
 are queued per chapter, with continuity before style before critic. The queue
 also reports out-of-date reviews. Every finding has a stable ID.
 
+## When an AI answer does not fit
+
+Weaver records the verdict from the JSON block. The verdict line can use bold,
+other capitals or punctuation, or be left out. If the line and the JSON block
+disagree, Weaver records the JSON verdict and adds a warning to the review record
+and command output. A verdict outside the reviewer's words gets one repair round
+that names the allowed words. Quotes are still checked word for word.
+The latest failed answer is kept in `.weaver/packets/<packet-id>.answer.txt`
+so you can inspect what went wrong.
+
 ## Rulings
 
 Decide once with `weaver rule <finding-id> --decision fix|allow|intended

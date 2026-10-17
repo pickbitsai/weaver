@@ -86,7 +86,10 @@ export async function runBook(root, project, { throughChapter = null, run = fals
     const response = await retryHost(root, project, packet.prompt);
     if (!response.ok) return { status: "failed", error: response.error };
     const result = await submitReviewPacket(root, project, packet, response.text, { host: retryHost });
-    return { status: result.ok ? "recorded" : "failed", error: result.ok ? null : result.errors.join("; "), packet_id: packet.id };
+    const warnings = result.record?.warnings || [];
+    for (const warning of warnings) onProgress(`chapter ${chapter} review ${lens.id}: warning: ${warning}`);
+    return { status: result.ok ? "recorded" : "failed", error: result.ok ? null : result.errors.join("; "), packet_id: packet.id,
+      ...(warnings.length ? { warnings } : {}), ...(result.answer_file ? { answer_file: result.answer_file } : {}) };
   });
   for (const chapter of chapters) await unit(`chapter ${chapter} repair`, async (retryHost) => {
     const inputs = repairInputs(root, project, chapter), existing = readProposal(root, chapter);

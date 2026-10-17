@@ -192,7 +192,7 @@ async function recordRepair(root, project, inputs, packet, text, { host = runHos
   const record = { chapter: inputs.chapter, chapter_prose_sha256: inputs.hashes.chapter_prose, inputs: inputs.hashes,
     packet_id: packet.id, created_at: new Date().toISOString(), note, findings: inputs.findings, edits: [], dropped_edits: [], declined: [] };
   const answer = await validateAndRepair(root, project, packet, text, (value) => validateRepairAnswer(value, inputs.findings), { host });
-  if (!answer.ok) return saveProposal(root, { ...record, status: "failed", error: answer.host_error || answer.errors.join("; ") });
+  if (!answer.ok) return saveProposal(root, { ...record, status: "failed", error: answer.host_error || answer.errors.join("; "), ...(answer.answer_file ? { answer_file: answer.answer_file } : {}) });
   const checked = validateRepairEdits(root, project, inputs, answer.value);
   const status = checked.edits.length ? "ready" : checked.declined.length ? "declined" : "no-usable-edits";
   return saveProposal(root, { ...record, ...checked, status });

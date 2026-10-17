@@ -7,7 +7,7 @@ import { loadCharacters } from "./characters.mjs";
 import { runHostBatch } from "./host.mjs";
 import { GENERATOR, SCHEMA_BASE } from "./identity.mjs";
 import { countWords, loadScenes, sha256 } from "./manuscript.mjs";
-import { buildPacket, extractJsonBlock, validateAndRepair } from "./packets.mjs";
+import { buildPacket, checkVerdict, extractJsonBlock, validateAndRepair } from "./packets.mjs";
 import { readerText } from "./prose.mjs";
 import { factsLedgerPath, statePath } from "./state.mjs";
 import { listLenses } from "./reviewers.mjs";
@@ -129,17 +129,19 @@ function normalizeQuote(value) {
 
 function parsedAnswer(text, lens) {
   const parsed = extractJsonBlock(text);
-  if (!parsed.ok) return { errors: parsed.errors, document: null };
+  if (!parsed.ok) return { errors: parsed.errors, document: null, verdict: null, warnings: [] };
   const document = parsed.value;
   const errors = [];
+  let verdict = null, warnings = [];
   if (!document || typeof document !== "object" || Array.isArray(document)) errors.push("answer must be a JSON object");
   else {
-    if (!lens.verdicts.includes(document.verdict)) errors.push("invalid lens verdict");
+    const checked = checkVerdict(text, document, { label: lens.id.toUpperCase(), verdicts: lens.verdicts, start: parsed.start, end: parsed.end });
+    verdict = checked.verdict;
+    warnings = checked.warnings;
+    errors.push(...checked.errors);
     if (!Array.isArray(document.findings)) errors.push("findings must be an array");
-    const line = String(text).slice(0, parsed.start).trim().split(/\n/u)[0]?.trim();
-    if (line !== `${lens.id.toUpperCase()}: ${document.verdict}`) errors.push("lens verdict line does not match JSON verdict");
   }
-  return { errors, document };
+  return { errors, document, verdict, warnings };
 }
 
 function validatedFindings(document, paragraphs) {
@@ -162,9 +164,9 @@ function validatedFindings(document, paragraphs) {
 export function validateReviewAnswer(text, lens, paragraphs, root = PACKAGE_ROOT) {
   if (typeof lens === "string") lens = lensDefinition(root, lens);
   const parsed = parsedAnswer(text, lens);
-  if (parsed.errors.length) return { ok: false, value: null, errors: parsed.errors };
+  if (parsed.errors.length) return { ok: false, value: null, errors: parsed.errors, warnings: [] };
   const checked = validatedFindings(parsed.document, paragraphs);
-  return { ok: checked.errors.length === 0, value: { verdict: parsed.document.verdict, findings: checked.findings, dropped_findings: checked.dropped }, errors: checked.errors };
+  return { ok: checked.errors.length === 0, value: { verdict: parsed.verdict, findings: checked.findings, dropped_findings: checked.dropped }, errors: checked.errors, warnings: parsed.warnings };
 }
 
 async function recordAnswer(root, project, chapter, lens, packet, inputs, text, options = {}) {
@@ -172,17 +174,21 @@ async function recordAnswer(root, project, chapter, lens, packet, inputs, text, 
   const definition = lensDefinition(root, lens);
   const validator = (answer) => validateReviewAnswer(answer, definition, paragraphs);
   const result = await validateAndRepair(root, project, packet, text, validator, options);
-  if (result.host_error) return { ok: false, errors: [result.host_error] };
+  const saved = result.answer_file ? { answer_file: result.answer_file } : {};
+  if (result.host_error) return { ok: false, errors: [result.host_error], ...saved };
   let value = result.value;
+  let warnings = result.warnings;
   if (!result.ok) {
     const parsed = parsedAnswer(result.answerText, definition);
-    if (parsed.errors.length) return { ok: false, errors: parsed.errors };
+    if (parsed.errors.length) return { ok: false, errors: parsed.errors, ...saved };
     const checked = validatedFindings(parsed.document, paragraphs);
-    value = { verdict: parsed.document.verdict, findings: checked.findings, dropped_findings: checked.dropped };
+    value = { verdict: parsed.verdict, findings: checked.findings, dropped_findings: checked.dropped };
+    warnings = parsed.warnings;
   }
   const record = {
     $schema: `${SCHEMA_BASE}review-1.json`, chapter, lens, verdict: value.verdict,
     findings: value.findings, dropped_findings: value.dropped_findings,
+    ...(warnings.length ? { warnings } : {}),
     chapter_prose_sha256: inputs.proseHash, facts_sha256: definition.context.includes("facts") ? inputs.facts.hash : null,
     packet_id: packet.id, generator: GENERATOR
   };
@@ -213,7 +219,8 @@ export async function runReview(root, project, { chapter, lenses, run = false, o
     const response = responses[index];
     if (!response.ok) { onProgress(`Chapter ${chapter} ${lens}: host error: ${response.error}`); continue; }
     const result = await recordAnswer(root, project, Number(chapter), lens, packet, inputs, response.text);
-    onProgress(result.ok ? `Chapter ${chapter} ${lens}: recorded (${result.record.findings.length} findings, ${result.record.dropped_findings} dropped)` : `Chapter ${chapter} ${lens}: answer invalid after repair: ${result.errors[0]}`);
+    onProgress(result.ok ? `Chapter ${chapter} ${lens}: recorded (${result.record.findings.length} findings, ${result.record.dropped_findings} dropped)` : `Chapter ${chapter} ${lens}: answer invalid after repair: ${result.errors[0]}${result.answer_file ? ` (Weaver saved the answer in ${result.answer_file})` : ""}`);
+    for (const warning of result.record?.warnings || []) onProgress(`Chapter ${chapter} ${lens}: warning: ${warning}`);
   }
 }
 

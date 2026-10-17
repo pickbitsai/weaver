@@ -326,10 +326,14 @@ try {
         ? await submitReviewPacket(root, project, packet, readFileSync(resolve(answerPath), "utf8"))
         : await submitStatePacket(root, project, packetId, readFileSync(resolve(answerPath), "utf8"));
       if (!result.ok) {
-        print(`Packet ${packetId}: answer invalid after repair: ${result.errors[0]}`);
+        const file = result.answer_file || result.record?.answer_file;
+        print(`Packet ${packetId}: answer invalid after repair: ${result.errors[0]}${file ? ` (Weaver saved the answer in ${file})` : ""}`);
         process.exitCode = 1;
       } else if (packet.kind === "REPAIR") print(proposalSummary(result.record));
-      else if (packet.kind === "REVIEW") print(`Chapter ${result.record.chapter} ${result.record.lens}: recorded (${result.record.findings.length} findings, ${result.record.dropped_findings} dropped)`);
+      else if (packet.kind === "REVIEW") {
+        print(`Chapter ${result.record.chapter} ${result.record.lens}: recorded (${result.record.findings.length} findings, ${result.record.dropped_findings} dropped)`);
+        for (const warning of result.record.warnings || []) print(`Chapter ${result.record.chapter} ${result.record.lens}: warning: ${warning}`);
+      }
       else print(`Scene ${result.scene_id}: recorded (${result.facts} facts)`);
     }
   } else if (command === "review") {
