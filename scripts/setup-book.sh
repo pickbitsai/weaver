@@ -35,7 +35,7 @@ sync_provider() {
     SB_LOWER="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
     case "$SB_LOWER/" in
         */onedrive*) printf '%s\n' 'OneDrive' ;;
-        */dropbox/*) printf '%s\n' 'Dropbox' ;;
+        */dropbox/*|*/'dropbox ('*')'/*) printf '%s\n' 'Dropbox' ;;
         */'icloud drive'/*|*/iclouddrive/*|*/library/'mobile documents'/*) printf '%s\n' 'iCloud Drive' ;;
         */'google drive'/*|*/googledrive/*|*/'my drive'/*) printf '%s\n' 'Google Drive' ;;
         */library/cloudstorage/*) printf '%s\n' 'a cloud storage folder' ;;
@@ -49,6 +49,13 @@ check_sync() {
     fi
 }
 
+check_modules() {
+    SB_LOWER="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+    case "$SB_LOWER/" in
+        */node_modules/*) stop_setup "The $1 folder is inside a node_modules folder: $2" "node_modules holds installed packages, and installing or updating Weaver replaces everything in it, so your book could be deleted. Choose a folder outside node_modules, for example $3." ;;
+    esac
+}
+
 main() {
     SB_TOOL=''
     SB_BOOK=''
@@ -57,6 +64,7 @@ main() {
     SB_TITLE=''
     SB_ID_GIVEN=false
     SB_TITLE_GIVEN=false
+    SB_BOOK_GIVEN=false
     for SB_ARG in "$@"; do
         if [ "$SB_ARG" = '--help' ]; then usage; return 0; fi
     done
@@ -78,7 +86,7 @@ main() {
             --id) SB_ID="$SB_VALUE"; SB_ID_GIVEN=true ;;
             --title) SB_TITLE="$SB_VALUE"; SB_TITLE_GIVEN=true ;;
             --tool-folder) SB_TOOL="$SB_VALUE" ;;
-            --book-folder) SB_BOOK="$SB_VALUE" ;;
+            --book-folder) SB_BOOK="$SB_VALUE"; SB_BOOK_GIVEN=true ;;
         esac
     done
     if [ "${CLAUDECODE+x}" = x ] || [ "${CODEX_CI+x}" = x ] || [ "${CODEX_SESSION_ID+x}" = x ] || [ "${CODEX_THREAD_ID+x}" = x ]; then
@@ -90,6 +98,10 @@ main() {
                 stop_setup "The book id \"$SB_ID\" can only use lowercase letters, numbers and hyphens." 'Use something like the-salt-road.' ;;
         esac
     fi
+    case "$SB_ID" in
+        con|prn|aux|nul|com[0-9]|lpt[0-9])
+            stop_setup "The book id \"$SB_ID\" is a name Windows keeps for its own use." 'Choose another id, like the-salt-road.' ;;
+    esac
     if [ "$SB_TITLE_GIVEN" = true ] && [ -z "$(printf '%s' "$SB_TITLE" | tr -d '[:space:]')" ]; then
         stop_setup 'The book title is empty.' "Add --title with your book's title."
     fi
@@ -128,7 +140,7 @@ main() {
     elif [ -n "$SB_CODEX" ]; then printf '%s\n' 'Found: Codex'
     elif [ -n "$SB_CLAUDE" ]; then printf '%s\n' 'Found: Claude Code'
     else
-        printf '%s\n' 'Warning: neither Codex nor Claude Code was found on this computer.' 'Setup will continue, but you need at least one of them to work on your book. The guide (docs/START-HERE.md) explains how to get them.'
+        printf '%s\n' 'Warning: neither Codex nor Claude Code was found on this computer.' "Setup will continue, but you need at least one of them to work on your book. At the end, setup shows where to find the author's guide, which explains how to get them."
     fi
     SB_HOME="$(full_path "$HOME")" || stop_setup 'The home folder could not be found.' 'Check HOME in your terminal, then run setup again.'
     SB_EXAMPLE="$SB_HOME/Weaver"
@@ -150,6 +162,8 @@ main() {
         "$SB_TOOL"/*) ;;
         *) stop_setup 'The book folder must be inside the tool folder.' "Weaver's safety checks look for Weaver in the folders above your book. Use a book folder inside $SB_TOOL, or choose a tool folder that contains $SB_BOOK." ;;
     esac
+    check_modules tool "$SB_TOOL" "$SB_EXAMPLE"
+    check_modules book "$SB_BOOK" "$SB_TOOL/${SB_ID:-my-book}"
     check_sync tool "$SB_TOOL"
     check_sync book "$SB_BOOK"
     if [ "$SB_SYSTEM" = Darwin ]; then
@@ -162,7 +176,7 @@ main() {
     SB_EXISTING=false
     if [ -f "$SB_BOOK/project.json" ]; then SB_EXISTING=true
     elif [ -d "$SB_BOOK" ]; then
-        SB_ENTRIES="$(ls -A "$SB_BOOK")" || stop_setup "The book folder could not be read: $SB_BOOK" 'Choose a folder you can open, then run setup again.'
+        SB_ENTRIES="$(find "$SB_BOOK" -mindepth 1 -maxdepth 1 ! \( -type f \( -name .DS_Store -o -name desktop.ini -o -name Thumbs.db \) \))" || stop_setup "The book folder could not be read: $SB_BOOK" 'Choose a folder you can open, then run setup again.'
         if [ -n "$SB_ENTRIES" ]; then
             stop_setup "The book folder already has files in it, but it is not a Weaver book: $SB_BOOK" 'Choose a new or empty folder for the book. PickBits can bring in a finished manuscript after setup.'
         fi
@@ -170,7 +184,7 @@ main() {
     if [ "$SB_EXISTING" = false ] && { [ -z "$SB_ID" ] || [ -z "$SB_TITLE" ]; }; then
         stop_setup 'To create a new book, setup needs both an id and a title.' "$SB_NEW_FIX"
     fi
-    if [ "$SB_EXISTING" = true ] && { [ "$SB_ID_GIVEN" = true ] || [ "$SB_TITLE_GIVEN" = true ]; }; then
+    if [ "$SB_EXISTING" = true ] && { [ "$SB_TITLE_GIVEN" = true ] || { [ "$SB_ID_GIVEN" = true ] && [ "$SB_BOOK_GIVEN" = true ]; }; }; then
         printf '%s\n' 'Note: this folder already holds a book, so the id and title you gave are not used.'
     fi
     SB_CLI="$SB_TOOL/node_modules/@pickbitsai/weaver/scripts/weaver.mjs"
@@ -180,7 +194,7 @@ main() {
         else
             case "$SB_SOURCE" in
                 *://*|github:*|git+*) ;;
-                *.tgz|*.tar.gz) stop_setup "Can't find the Weaver package file: $SB_SOURCE" 'Check the file name and where you saved it, then run setup again.' ;;
+                *.tgz|*.tar.gz) stop_setup "Can't find the Weaver package file: $SB_SOURCE" 'Check the file name and where you saved it, then run setup again. To keep the Weaver that is already installed, leave out --source.' ;;
             esac
         fi
     elif [ ! -f "$SB_CLI" ]; then
@@ -193,17 +207,32 @@ main() {
     fi
     if [ -z "$SB_SOURCE" ]; then printf '%s\n' 'Keeping the Weaver already installed in the tool folder.'
     else
+        SB_PACKAGE="$SB_TOOL/node_modules/@pickbitsai/weaver"
+        if [ -f "$SB_PACKAGE/scripts/integrity.mjs" ] && [ ! -L "$SB_PACKAGE" ]; then
+            "$SB_NODE" "$SB_PACKAGE/scripts/integrity.mjs" --check >/dev/null 2>&1
+            if [ "$?" -ne 0 ]; then
+                printf '%s\n' "Weaver's own files in the tool folder were changed, so setup puts back the released files."
+                rm -rf "$SB_PACKAGE"
+            fi
+        fi
         printf '%s\n' "Installing Weaver from $SB_SOURCE ..."
-        (cd "$SB_TOOL" && "$SB_NPM" install --save-exact --no-audit --no-fund "$SB_SOURCE")
+        (cd "$SB_TOOL" && "$SB_NPM" install --save-exact --no-audit --no-fund --no-update-notifier "$SB_SOURCE")
         if [ "$?" -ne 0 ]; then
             stop_setup "Weaver could not be installed from $SB_SOURCE." 'Check the internet connection and the package name or address, then run setup again. If it keeps failing, contact PickBits.'
         fi
     fi
+    if [ "$SB_EXISTING" = true ] && [ ! -f "$SB_BOOK/project.json" ]; then
+        stop_setup "The book's files disappeared from $SB_BOOK while Weaver was being installed." 'Contact PickBits before doing anything else. If you turned on backup, your book is safe on GitHub.'
+    fi
     if [ ! -f "$SB_CLI" ]; then stop_setup 'Weaver was installed, but its files are not where setup expects them.' 'Contact PickBits.'; fi
+    if [ ! -f "$SB_TOOL/node_modules/@pickbitsai/weaver/scripts/setup-guide.mjs" ]; then
+        stop_setup "The Weaver in the tool folder is an older version that this setup script can't finish with." 'Run setup again with --source and the newest Weaver package from PickBits.'
+    fi
     SB_VERSION="$("$SB_NODE" "$SB_CLI" version)"
     if [ "$?" -ne 0 ]; then stop_setup 'Weaver could not report its version.' 'Run setup again. If it keeps happening, contact PickBits.'; fi
     printf '%s\n' "Installed $SB_VERSION."
     if [ "$SB_EXISTING" = false ]; then
+        rm -f "$SB_BOOK/.DS_Store" "$SB_BOOK/desktop.ini" "$SB_BOOK/Thumbs.db"
         "$SB_NODE" "$SB_CLI" init "$SB_BOOK" --id "$SB_ID" --title "$SB_TITLE" --empty
         if [ "$?" -ne 0 ]; then stop_setup 'Weaver could not create the book.' 'Read the message above, then run setup again. If it keeps failing, contact PickBits.'; fi
         printf '%s\n' "Created your book \"$SB_TITLE\" in $SB_BOOK."

@@ -81,6 +81,17 @@ export function codexRules() {
   ].map((prefix) => [...prefix, ...command.split(" ")]));
   patterns.push([["git", "git.exe"], [...GIT_WRITES]], [["git", "git.exe"], "branch", ["-D", "-d", "-m", "-M", "--delete", "--move"]],
     [["npm", "npm.cmd", "pnpm", "pnpm.cmd", "yarn", "yarn.cmd"], [...INSTALL_WRITES]]);
+  const setupScripts = ["setup-book.sh", "setup-book.ps1", "./setup-book.sh", "./setup-book.ps1", ".\\setup-book.ps1",
+    "scripts/setup-book.sh", "scripts/setup-book.ps1",
+    "node_modules/@pickbitsai/weaver/scripts/setup-book.sh", "node_modules/@pickbitsai/weaver/scripts/setup-book.ps1",
+    "node_modules\\@pickbitsai\\weaver\\scripts\\setup-book.ps1",
+    "../node_modules/@pickbitsai/weaver/scripts/setup-book.sh", "../node_modules/@pickbitsai/weaver/scripts/setup-book.ps1",
+    "..\\node_modules\\@pickbitsai\\weaver\\scripts\\setup-book.ps1"];
+  const powershells = ["powershell", "powershell.exe", "pwsh", "pwsh.exe"];
+  const file = ["-File", "-file"], policy = ["-ExecutionPolicy", "-executionpolicy"], bypass = ["Bypass", "ByPass", "bypass"];
+  patterns.push([setupScripts], [["sh", "bash", "zsh", "dash"], setupScripts], [powershells, file, setupScripts],
+    [powershells, "-NoProfile", file, setupScripts], [powershells, policy, bypass, file, setupScripts],
+    [powershells, "-NoProfile", policy, bypass, file, setupScripts]);
   return `# Weaver author guardrails. Project-scoped; restart Codex after installation.\n${patterns.map((pattern) => `prefix_rule(pattern=${JSON.stringify(pattern)}, decision="forbidden", justification="Leave book decisions, history, settings and tool installation to the author; use the Weaver author page.")`).join("\n")}\n`;
 }
 

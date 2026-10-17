@@ -3,5 +3,6 @@
 *.md text eol=lf
 *.json text eol=lf
 *.sh text eol=lf
+*.rules text eol=lf
 logs/** export-ignore
 logs export-ignore

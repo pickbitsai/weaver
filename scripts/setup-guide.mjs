@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GENERATOR } from "../engine/identity.mjs";
-import { classifySetup, renderSetupGuidance, gitRemotes, findHostsOnPath } from "../engine/setup-guide.mjs";
+import { classifySetup, renderSetupGuidance, setupCommand, gitRemotes, findHostsOnPath } from "../engine/setup-guide.mjs";
 
 try {
   const args = process.argv.slice(2), options = {};
@@ -28,15 +28,16 @@ try {
     { encoding: "utf8", windowsHide: true, timeout: 120000 });
   let report;
   try { report = JSON.parse(result.stdout); } catch { /* A missing report becomes a plain problem below. */ }
-  const guidance = report ? classifySetup({ report, project, remotes: gitRemotes(root), hostsOnPath: findHostsOnPath(), bookRoot: root, toolRoot })
+  const guidance = report ? classifySetup({ report, project, remotes: gitRemotes(root), hostsOnPath: findHostsOnPath(), platform: process.platform, bookRoot: root, toolRoot })
     : { ok: false, steps: [], reminders: [], notes: [], problems: [{ id: "doctor", problem: "Weaver's health check could not run",
       why: (result.stderr || "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "It gave no report.",
       fix: "Run setup again. If it keeps happening, contact PickBits." }] };
   const id = project.project_id || "(unknown)", title = project.title || "(unknown)";
   if (options.json) process.stdout.write(`${JSON.stringify({ ok: guidance.ok, generator: GENERATOR,
     book: { id, title, folder: root }, tool: { folder: toolRoot }, steps: guidance.steps, reminders: guidance.reminders,
-    problems: guidance.problems, notes: guidance.notes }, null, 2)}\n`);
-  else process.stdout.write(renderSetupGuidance(guidance, { generator: GENERATOR, title, id, bookRoot: root, toolRoot, guidePath: join(packageRoot, "docs", "START-HERE.md") }));
+    problems: guidance.problems, notes: guidance.notes,
+    rerun: toolRoot == null ? null : setupCommand({ platform: process.platform, toolRoot, bookRoot: root }) }, null, 2)}\n`);
+  else process.stdout.write(renderSetupGuidance(guidance, { generator: GENERATOR, title, id, bookRoot: root, toolRoot, platform: process.platform, guidePath: join(packageRoot, "docs", "START-HERE.md") }));
   process.exitCode = guidance.ok ? 0 : 1;
 } catch (error) {
   process.stderr.write(`Setup stopped: ${String(error.message).replace(/[\r\n]+/g, " ")}\n`);

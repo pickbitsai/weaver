@@ -22,10 +22,14 @@ export const PROTECTED_PATHS = [
 const CODE_FILE = /\.(?:m?js|cjs|ts|mts|cts|ps1|psm1|bat|cmd|sh|py|vbs|exe)$/iu;
 export const SEALED_CONFIG_PATHS = [".claude/settings.json", ".claude/settings.local.json", ".codex/**", "CLAUDE.md", "AGENTS.md", "project.json", "quality/**"];
 export const GUARD_CHECK_IDS = ["guardrails-installed", "book-settings-sealed", "approved-history", "protected-files-clean"];
+// Setup installs Weaver itself, so only the author runs it.
+export const SETUP_DENY_RULES = ["Bash(*setup-book*)", "PowerShell(*setup-book*)"];
+const SETUP_SCRIPT = /setup-book(?![a-z0-9_])/iu;
 export const WEAVER_DENY_RULES = [
   ...AUTHOR_ONLY_COMMANDS.flatMap((command) => ["weaver", "npx weaver", "npx --no-install weaver", "npx.cmd weaver"]
     .map((prefix) => `Bash(${prefix} ${command}:*)`)),
-  "Edit(/.claude/**)", "Edit(/quality/**)"
+  "Edit(/.claude/**)", "Edit(/quality/**)",
+  ...SETUP_DENY_RULES
 ];
 
 const SETTINGS_REASON = "Weaver's settings can't be changed by the AI; if a rule seems wrong, tell the author so they can rule on the finding.";
@@ -118,6 +122,7 @@ export function shellGuard(payload, depth = 0) {
   // Flatten quotes to see commands inside cmd /c, powershell -Command, bash -c,
   // and code strings. This is deliberately conservative, not a shell parser.
   const flat = command.replace(/["'`]/gu, " ");
+  if (SETUP_SCRIPT.test(flat)) return deny(TOOL_REASON);
   const author = /(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+(approve|reject|undo|rule|proposal|state:accept|release|import|guard\s+seal)(?=\s|$|[;&|])/iu.exec(flat);
   if (author) {
     const chapter = /--chapter(?:=|\s+)(\d+)/iu.exec(flat)?.[1];

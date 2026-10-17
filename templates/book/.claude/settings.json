@@ -71,7 +71,9 @@
       "Bash(npx --no-install weaver guard seal:*)",
       "Bash(npx.cmd weaver guard seal:*)",
       "Edit(/.claude/**)",
-      "Edit(/quality/**)"
+      "Edit(/quality/**)",
+      "Bash(*setup-book*)",
+      "PowerShell(*setup-book*)"
     ],
     "disableBypassPermissionsMode": "disable"
   }

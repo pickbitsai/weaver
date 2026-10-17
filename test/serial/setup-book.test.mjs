@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
+// Runs serially after the main suite because it installs packages and starts PowerShell/sh many times.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, symlinkSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { authorEnv } from "./helpers/env.mjs";
-import { AI_HOST_ENV } from "../engine/guard.mjs";
-import { WEAVER_HOOK_COMMANDS, CODEX_HOOK_COMMANDS } from "../engine/hooks.mjs";
-import { classifySetup, renderSetupGuidance, gitRemotes } from "../engine/setup-guide.mjs";
+import { authorEnv } from "../helpers/env.mjs";
+import { AI_HOST_ENV } from "../../engine/guard.mjs";
+import { WEAVER_HOOK_COMMANDS, CODEX_HOOK_COMMANDS } from "../../engine/hooks.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const WIN = process.platform === "win32";
 const SCRIPT = WIN ? "setup-book.ps1" : "setup-book.sh";
 const POWERSHELL = join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -50,7 +50,7 @@ function scriptEnv(sandbox, extra = {}) {
   // Prepare them in the fixture and keep its module cache off the working tree.
   const windowsEnv = WIN ? { APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local"), PSModuleAnalysisCachePath: "NUL" } : {};
   if (WIN) for (const directory of [windowsEnv.APPDATA, join(windowsEnv.LOCALAPPDATA, "Microsoft", "Windows", "PowerShell")]) mkdirSync(directory, { recursive: true });
-  return { ...env, HOME: home, USERPROFILE: home, NPM_CONFIG_CACHE: join(sandbox, "npm-cache"), NPM_CONFIG_OFFLINE: "true",
+  return { ...env, HOME: home, USERPROFILE: home, CODEX_HOME: join(home, ".codex"), NPM_CONFIG_CACHE: join(sandbox, "npm-cache"), NPM_CONFIG_OFFLINE: "true",
     NPM_CONFIG_AUDIT: "false", NPM_CONFIG_FUND: "false", NPM_CONFIG_UPDATE_NOTIFIER: "false", ...windowsEnv, ...extra };
 }
 
@@ -86,9 +86,9 @@ function guide(tool, book, env, withTool = true) {
   return JSON.parse(result.stdout);
 }
 
-function doctor(tool, book, env) {
+function doctor(tool, book, env, expectedStatus = 1) {
   const result = nodeResult(installed(tool, "scripts/weaver.mjs"), ["doctor", "--json", "--root", book], env);
-  assert.equal(result.status, 1, result.output);
+  assert.equal(result.status, expectedStatus, result.output);
   return JSON.parse(result.stdout);
 }
 
@@ -99,95 +99,6 @@ function git(book, args, env) {
 }
 
 const ids = (items) => items.map(({ id }) => id);
-const finding = (id) => ({ id, problem: `Problem for ${id}`, why: "It matters.", fix: "Fix this." });
-function report({ warnings = [], blocking = [], codex = [], claude = [], passing = [] } = {}) {
-  return { checks: [...warnings.map((id) => ({ id, status: "warning", findings: [finding(id)] })),
-    ...blocking.map((id) => ({ id, status: "blocking", findings: [finding(id)] })),
-    ...passing.map((id) => ({ id, status: "pass", findings: [] }))], blocking: blocking.map(finding),
-  guardrails: { codex: { problems: codex }, claude: { problems: claude } } };
-}
-const fresh = () => report({ warnings: ["host", "codex-hook-trust", "book-settings-sealed"], blocking: ["guardrails-installed"],
-  codex: ["project hooks are not trusted or could not be verified; open /hooks in this book folder"] });
-const classify = (value, options = {}) => classifySetup({ report: value, hostsOnPath: { codex: true, claude: true }, bookRoot: "/books/ash", ...options });
-
-test("setup scripts have portable ASCII source and the author-session guard", () => {
-  const sh = readFileSync(join(ROOT, "scripts/setup-book.sh"));
-  const ps = readFileSync(join(ROOT, "scripts/setup-book.ps1"));
-  for (const bytes of [sh, ps]) assert.ok(bytes.every((byte) => byte < 0x80), "scripts must be ASCII");
-  const header = "# SPDX-License-Identifier: Apache-2.0\n# Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.\n";
-  assert.ok(sh.toString().startsWith(`#!/bin/sh\n${header}`));
-  assert.ok(ps.toString().replaceAll("\r\n", "\n").startsWith(header + "#Requires -Version 5.1\n"));
-  assert.equal(sh.includes(13), false);
-  assert.equal(sh.toString().trimEnd().split("\n").at(-1), 'main "$@"; exit $?');
-  assert.doesNotMatch(sh.toString(), /\[\[|\blocal\s|\bfunction\s|\bdeclare\s|<<<|\$'|==/);
-  assert.doesNotMatch(sh.toString(), /^\s*(path|status|argv|options|commands|functions|aliases|prompt)=/m);
-  for (const name of AI_HOST_ENV) for (const bytes of [sh, ps]) assert.ok(bytes.toString().includes(name), name);
-});
-
-test("setup guidance distinguishes missing one-time steps from broken checks", () => {
-  const untrusted = classify(fresh());
-  assert.equal(untrusted.ok, true);
-  assert.deepEqual(ids(untrusted.steps), ["codex-trust", "backup", "seal"]);
-  assert.deepEqual(ids(untrusted.reminders), ["claude-trust"]);
-  assert.deepEqual(untrusted.problems, []);
-  const disabled = fresh(); disabled.guardrails.codex.problems = ["Codex has turned off hooks"];
-  assert.equal(classify(disabled).ok, false);
-  assert.deepEqual(classify(disabled).problems, [finding("guardrails-installed")]);
-  const brokenClaude = fresh(); brokenClaude.guardrails.claude.problems.push("A required hook is missing");
-  assert.equal(classify(brokenClaude).ok, false);
-  for (const id of ["book-in-git", "something-new"]) {
-    const result = classify(report({ blocking: [id, id] }));
-    assert.equal(result.ok, false);
-    assert.deepEqual(result.problems, [finding(id)]);
-  }
-  const unrunnable = classify(report({ warnings: ["hooks-runnable"] }), { toolRoot: "/books/tools" });
-  assert.equal(unrunnable.ok, false);
-  assert.equal(unrunnable.problems[0].id, "hooks-runnable");
-  assert.match(unrunnable.problems[0].fix, /\/books\/tools/);
-  assert.match(classify(report({ warnings: ["hooks-runnable"] })).problems[0].fix, /folder where Weaver is installed/);
-  const backup = classify(report({ blocking: ["backup-configured"] }), { remotes: ["origin"] });
-  assert.equal(backup.ok, true);
-  assert.ok(ids(backup.steps).includes("backup"));
-  assert.equal(ids(classify(report(), { remotes: ["origin"] }).steps).includes("backup"), false);
-  assert.equal(ids(classify(report({ passing: ["backup-configured"] })).steps).includes("backup"), false);
-  assert.ok(ids(classify(report({ warnings: ["backup-configured"] }), { remotes: ["origin"] }).steps).includes("backup"));
-  for (const [platform, launcher] of [["win32", "npx.cmd"], ["darwin", "npx"]]) {
-    const result = classify(report(), { platform });
-    assert.ok(result.steps.find(({ id }) => id === "backup").lines.some((line) => line.includes(`${launcher} weaver backup setup --remote`)));
-  }
-  assert.equal(ids(classify(report({ passing: ["codex-hook-trust"] })).steps).includes("codex-trust"), false);
-  assert.ok(ids(classify(report(), { hostsOnPath: { codex: false, claude: true } }).steps).includes("codex-install"));
-  assert.ok(ids(classify(report({ warnings: ["codex-available"] })).steps).includes("codex-login"));
-  assert.equal(ids(classify(fresh(), { project: { hosts: ["claude"] } }).steps).some((id) => id.startsWith("codex-")), false);
-  assert.ok(ids(classify(fresh(), { project: { hosts: [] } }).steps).includes("codex-trust"));
-  assert.ok(ids(classify(report({ warnings: ["codex-windows-sandbox"] })).steps).includes("codex-sandbox"));
-  const noHosts = fresh(); noHosts.guardrails.codex.problems = ["Codex is not installed, so hook trust cannot be checked"];
-  const missing = classify(noHosts, { hostsOnPath: { codex: false, claude: false } });
-  assert.equal(missing.ok, true);
-  assert.deepEqual(ids(missing.steps), ["codex-install", "codex-trust", "claude-install", "backup", "seal"]);
-  assert.ok(ids(classify(report({ warnings: ["host-available"] })).steps).includes("packet-host"));
-  assert.equal(ids(classify(report({ warnings: ["host-available"] }), { hostsOnPath: { codex: true, claude: false } }).steps).includes("packet-host"), false);
-  const unknown = report({ warnings: ["something-new", "something-new", "host"] });
-  assert.deepEqual(classify(unknown).notes, [{ id: "something-new", problem: "Problem for something-new", fix: "Fix this." }]);
-  const details = { generator: "PickBits Weaver", title: "Ash", id: "ash", bookRoot: "/books/ash", toolRoot: null, guidePath: "docs/START-HERE.md" };
-  for (const guidance of [untrusted, unrunnable, classify(report(), { remotes: ["origin"] }), classify(unknown)]) {
-    const text = renderSetupGuidance(guidance, details);
-    assert.equal(text.includes("Please fix this first:"), guidance.problems.length > 0);
-    assert.equal(text.includes("One-time steps still to do:"), guidance.steps.length > 0);
-    assert.ok([...text].every((char) => char.charCodeAt(0) < 0x80));
-    assert.ok(text.endsWith("\n"));
-    assert.equal(text.includes("Tool folder:"), false);
-  }
-  assert.match(renderSetupGuidance(untrusted, { ...details, title: undefined, id: undefined }), /\(unknown\)/);
-  assert.deepEqual(gitRemotes(join(ROOT, "missing-book-folder")), []);
-});
-
-test("setup guide gives a plain error when the book folder is missing", () => {
-  const result = nodeResult(join(ROOT, "scripts/setup-guide.mjs"), [], authorEnv());
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /--root/);
-  assert.doesNotMatch(result.stderr, /\n\s+at /);
-});
 
 test("author setup on this platform", platformOptions, async (t) => {
   const source = pack(t);
@@ -199,16 +110,26 @@ test("author setup on this platform", platformOptions, async (t) => {
     assert.match(result.output, /Usage:/);
     assert.match(result.output, /Setup is safe to run again/);
   });
-  await t.test("packed setup creates a clean book and is idempotent from its installed copy", (t) => {
+  await t.test("packed setup creates a clean book and is idempotent from its installed copy", async (t) => {
     const sandbox = temporary(t), tool = join(sandbox, "tool folder"), book = join(tool, "my book");
     const options = { tool, book, source, title: TITLE, id: ID };
     const env = scriptEnv(sandbox, { WEAVER_FAKE_CODEX_TRUST: "untrusted" });
+    mkdirSync(book, { recursive: true });
+    for (const name of [".DS_Store", "desktop.ini", "Thumbs.db"]) writeFileSync(join(book, name), "OS metadata");
     const first = runSetup(script, options, env);
     assert.equal(first.status, 0, first.output);
     const project = JSON.parse(readFileSync(join(book, "project.json"), "utf8"));
     assert.equal(project.project_id, ID);
     assert.equal(project.title, TITLE);
     assert.ok(existsSync(join(book, ".git")));
+    for (const name of [".DS_Store", "desktop.ini", "Thumbs.db", "narrative-state/1-1.md", "outline/scenes/1-1.md", "quality/critical-path.json"]) {
+      assert.equal(existsSync(join(book, name)), false, name);
+    }
+    assert.equal(readdirSync(join(book, "manuscript")).some((name) => name.startsWith("chapter-")), false);
+    assert.match(first.output, /run setup again yourself/);
+    const rerun = first.output.split(/\r?\n/).find((line) => line.includes("setup-book") && line.includes(tool) && line.includes(book));
+    assert.ok(rerun, first.output);
+    assert.doesNotMatch(rerun, /-Source|--source/);
     assert.equal(git(book, ["status", "--porcelain"], env), "");
     for (const [file, commands] of [[".claude/settings.json", WEAVER_HOOK_COMMANDS], [".codex/hooks.json", CODEX_HOOK_COMMANDS]]) {
       const config = readFileSync(join(book, file), "utf8");
@@ -223,6 +144,7 @@ test("author setup on this platform", platformOptions, async (t) => {
     for (const id of ["hooks-runnable", "install-integrity", "tool-book-separation"]) assert.equal(health.checks.find((c) => c.id === id).status, "pass", id);
     const guidance = guide(tool, book, env);
     assert.equal(guidance.ok, true);
+    assert.equal(guidance.rerun, rerun.trim());
     for (const id of ["codex-trust", "backup", "seal"]) assert.ok(ids(guidance.steps).includes(id));
     assert.deepEqual(guidance.problems, []);
     assert.match(first.output, /weaver backup setup --remote/);
@@ -238,12 +160,70 @@ test("author setup on this platform", platformOptions, async (t) => {
       const next = runSetup(installed(tool, `scripts/${SCRIPT}`), { ...options, source: withSource ? source : undefined }, env, shell);
       assert.equal(next.status, 0, next.output);
       assert.match(next.output, /Using the book that is already in/);
+      assert.match(next.output, /id and title you gave are not used/);
       if (!withSource) assert.match(next.output, /Keeping the Weaver already installed/);
       assert.equal(git(book, ["rev-parse", "HEAD"], env), head);
       assert.deepEqual(files.map((file) => readFileSync(file)), before);
       assert.equal(git(book, ["status", "--porcelain"], env), "");
       assert.equal(ids(guide(tool, book, env).steps).includes("codex-trust"), false);
     }
+    await t.test("adopts a book whose hooks are missing", () => {
+      rmSync(join(book, ".codex/hooks.json"));
+      rmSync(join(book, ".codex/rules/weaver.rules"));
+      const settingsPath = join(book, ".claude/settings.json");
+      const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+      settings.hooks = {};
+      writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+      const result = runSetup(script, { tool, book }, env);
+      assert.equal(result.status, 0, result.output);
+      assert.doesNotMatch(result.output, /id and title you gave are not used/);
+      for (const [file, commands] of [[".claude/settings.json", WEAVER_HOOK_COMMANDS], [".codex/hooks.json", CODEX_HOOK_COMMANDS]]) {
+        const config = readFileSync(join(book, file), "utf8");
+        for (const key of ["pre", "post", "shell"]) assert.ok(config.includes(commands[key]), `${file}: ${commands[key]}`);
+      }
+      assert.ok(existsSync(join(book, ".codex/rules/weaver.rules")));
+      const health = doctor(tool, book, env, 0);
+      assert.equal(health.guardrails.claude.on, true);
+      assert.equal(health.guardrails.codex.on, true);
+      assert.equal(git(book, ["status", "--porcelain"], env), "");
+    });
+    await t.test("hooks install failure is a plain setup error", () => {
+      writeFileSync(join(book, ".claude/settings.json"), "{ not json");
+      try {
+        const result = runSetup(script, { tool, book }, env);
+        assert.equal(result.status, 1, result.output);
+        assert.match(result.output, /Weaver could not finish installing its safety checks/);
+      } finally { git(book, ["checkout", "--", ".claude/settings.json"], env); }
+    });
+    await t.test("older Weaver is refused without changing the book", () => {
+      const before = git(book, ["status", "--porcelain"], env);
+      const contents = files.map((file) => readFileSync(file));
+      rmSync(installed(tool, "scripts/setup-guide.mjs"));
+      const result = runSetup(script, { tool, book }, env);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /older version/);
+      assert.equal(git(book, ["rev-parse", "HEAD"], env), head);
+      assert.equal(git(book, ["status", "--porcelain"], env), before);
+      assert.deepEqual(files.map((file) => readFileSync(file)), contents);
+    });
+    await t.test("source repairs a changed installation", () => {
+      const result = runSetup(script, { tool, book, source }, env);
+      assert.equal(result.status, 0, result.output);
+      assert.match(result.output, /puts back the released files/);
+      assert.ok(existsSync(installed(tool, "scripts/setup-guide.mjs")));
+      assert.equal(doctor(tool, book, env, 0).checks.find(({ id }) => id === "install-integrity").status, "pass");
+      assert.equal(git(book, ["rev-parse", "HEAD"], env), head);
+    });
+    await t.test("book is re-checked after npm prunes a linked target", () => {
+      const target = join(tool, "node_modules/book-two"), link = join(tool, "linked-book");
+      cpSync(book, target, { recursive: true });
+      symlinkSync(target, link, WIN ? "junction" : "dir");
+      const result = runSetup(script, { tool, book: link, source }, env);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /disappeared/);
+      assert.equal(existsSync(join(link, "project.json")), false);
+      assert.equal(git(book, ["rev-parse", "HEAD"], env), head);
+    });
     for (const file of [".claude", ".codex", ".gitconfig", ".npmrc"]) assert.equal(existsSync(join(env.HOME, file)), false, file);
   });
   await t.test("setup continues when neither AI host is on PATH", (t) => {
@@ -257,6 +237,8 @@ test("author setup on this platform", platformOptions, async (t) => {
     const result = runSetup(script, { tool, book, source, title: TITLE, id: ID }, env);
     assert.equal(result.status, 0, result.output);
     assert.match(result.output, /neither Codex nor Claude Code/);
+    assert.doesNotMatch(result.output, /(?:^|[\s(])docs\/START-HERE\.md/);
+    assert.match(result.output, /where to find the author's guide/);
     const guidance = guide(tool, book, env);
     assert.equal(guidance.ok, true);
     for (const id of ["codex-install", "codex-trust", "claude-install"]) assert.ok(ids(guidance.steps).includes(id));
@@ -272,13 +254,23 @@ test("author setup on this platform", platformOptions, async (t) => {
       { name: "empty AI marker", pattern: /own terminal/, env: { CODEX_THREAD_ID: "" } },
       { name: "no source", pattern: /where to get Weaver/, options: () => ({ source: undefined }) },
       { name: "invalid id", pattern: /lowercase letters, numbers and hyphens/, options: () => ({ id: "Ash And Ember" }) },
+      { name: "reserved id", pattern: /Windows keeps/, options: () => ({ id: "con" }) },
       { name: "blank title", pattern: /book title is empty/, options: () => ({ title: "  " }) },
       { name: "outside tool", pattern: /must be inside the tool folder/, options: (s) => ({ book: join(s, "elsewhere", "book") }) },
       { name: "same folder", pattern: /its own folder inside the tool folder/, options: (s) => ({ book: join(s, "tool") }) },
+      { name: "book in node_modules", pattern: /inside a node_modules folder/, options: (s) => ({ book: join(s, "tool", "node_modules", "book-two") }) },
+      { name: "book in installed package", pattern: /inside a node_modules folder/, options: (s) => ({ book: join(s, "tool", "node_modules", "@pickbitsai", "weaver", "my-book") }) },
+      { name: "tool in node_modules", pattern: /The tool folder is inside a node_modules folder/, options: (s) => ({ tool: join(s, "NODE_MODULES", "tool"), book: join(s, "NODE_MODULES", "tool", "book") }) },
       { name: "whole home", pattern: /whole home folder/, options: (s) => ({ tool: join(s, "home"), book: join(s, "home", "book") }) },
-      ...["Dropbox", "OneDrive - Example", "iCloud Drive", "Google Drive"].map((provider) => ({ name: provider,
-        pattern: new RegExp(provider.split(" -")[0]), options: (s) => ({ tool: join(s, provider, "tool"), book: join(s, provider, "tool", "book") }) })),
+      ...["Dropbox", "Dropbox (Personal)", "Dropbox (Example Co)", "OneDrive - Example", "iCloud Drive", "Google Drive"].map((provider) => ({ name: provider,
+        pattern: new RegExp(provider.split(/ -| \(/)[0]), options: (s) => ({ tool: join(s, provider, "tool"), book: join(s, provider, "tool", "book") }) })),
       ...(WIN ? [{ name: "OneDrive environment", pattern: /OneDrive/, options: (s) => ({ tool: join(s, "cloud", "tool"), book: join(s, "cloud", "tool", "book") }), environment: (s) => ({ OneDrive: join(s, "cloud") }) }] : []),
+      ...(WIN ? [
+        { name: "tool with ampersand", pattern: /& or \^/, options: (s) => ({ tool: join(s, "R&D", "tool"), book: join(s, "R&D", "tool", "book") }) },
+        { name: "book with caret", pattern: /& or \^/, options: (s) => ({ book: join(s, "tool", "a^b") }) },
+        { name: "reserved book folder", pattern: /Windows keeps/, options: (s) => ({ book: join(s, "tool", "aux") }) },
+        { name: "reserved folder with extension", pattern: /Windows keeps/, options: (s) => ({ tool: join(s, "CoM0.txt", "tool"), book: join(s, "CoM0.txt", "tool", "book") }) }
+      ] : []),
       { name: "non-book files", pattern: /not a Weaver book/, prepare: (s, o) => { mkdirSync(o.book, { recursive: true }); writeFileSync(join(o.book, "notes.txt"), "Keep these notes."); } },
       { name: "old Node", pattern: /Node\.js 22 or newer/, shim: "node" },
       { name: "broken Git", pattern: /Git is not installed or does not start/, shim: "git" },
@@ -309,6 +301,7 @@ test("author setup on this platform", platformOptions, async (t) => {
       const result = runSetup(script, options, env, "sh", entry.args || []);
       assert.equal(result.status, 1, result.output);
       assert.match(result.output, entry.pattern);
+      if (entry.name === "missing tarball") assert.match(result.output, /leave out/);
       assert.deepEqual(tree(sandbox), before, result.output);
       if (entry.name === "defaults use home") assert.ok(result.output.includes(join(sandbox, "home", "Weaver", ID)), result.output);
     });

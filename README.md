@@ -125,6 +125,25 @@ folder trust, Codex `/hooks` trust, backup with
 those steps remain. Running it again changes nothing that is already in place,
 and it never edits either host's global configuration.
 
+The scripts also refuse a tool or book folder inside `node_modules` (npm replaces
+what is in it on every install), a Windows folder whose name has `&` or `^` in it
+(npm's `.cmd` launchers, which both hosts' hooks use, can't start from there), and
+a Windows reserved name such as `con` as the book id or a folder name. Given a
+source, setup puts back the released files when Weaver's own files in the tool
+folder were changed; a book folder with only `.DS_Store`, `desktop.ini` or
+`Thumbs.db` in it counts as empty. Any other backup problem `weaver doctor`
+reports (a failed, late or unchecked backup) is shown with doctor's own fix, and
+only a book that has no backup yet gets the create-a-repository step. At the end,
+setup prints the command that runs it again on that computer, without the package
+source.
+
+An AI session can't run setup: the shell guard refuses any command that names
+`setup-book`, and the Claude Code deny rules (`Bash(*setup-book*)`,
+`PowerShell(*setup-book*)`) and the Codex command rules cover the same scripts,
+because setup installs Weaver itself. The setup tests install packages and start
+PowerShell or `sh` many times, so `npm test` runs them as a separate, serial step
+(`test/serial/`) after the rest of the suite.
+
 ## The studio
 
 Start the local author page with `weaver studio --root ./my-book`. It listens

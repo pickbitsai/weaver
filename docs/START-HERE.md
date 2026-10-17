@@ -21,13 +21,27 @@ Your AI has to be one that can work in folders on your computer. The ordinary ch
 windows (ChatGPT or Claude on the web) can't run Weaver.
 
 - **Codex.** You can use Codex in the ChatGPT desktop app, as a *local* session in
-  your book folder. Weaver also needs the Codex command-line tool installed once,
+  your book folder. Weaver also needs the Codex command-line tool, installed once,
   so it can check that Codex's safety checks are on and run whole-book checks on
-  your ChatGPT plan. In a terminal, type `npm install -g @openai/codex`, then
-  `codex login`, and choose **ChatGPT**.
-- **Claude Code.** Install it by following the steps at
-  [claude.com/claude-code](https://claude.com/claude-code), and sign in with your
-  Claude account.
+  your ChatGPT plan. To install it, type this in a terminal:
+  - **Windows** (in PowerShell):
+    `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"`
+  - **Mac** (in Terminal): `curl -fsSL https://chatgpt.com/codex/install.sh | sh`
+
+  If the installer asks whether to start Codex now, type `n` and press Enter. Then
+  close the terminal, open a new one, type `codex login`, and sign in with your
+  ChatGPT account in the browser window that opens.
+- **Claude Code.** Claude Code needs a paid Claude plan (Pro or Max). To install it,
+  type this in a terminal:
+  - **Windows** (in PowerShell): `irm https://claude.ai/install.ps1 | iex`
+  - **Mac** (in Terminal): `curl -fsSL https://claude.ai/install.sh | bash`
+
+  Then close the terminal and open a new one. The first time you open Claude Code,
+  it asks you to sign in with your Claude account.
+
+**If you use only one of them, tell PickBits.** Weaver expects both unless your
+book is set to one, and until then it can stop you approving chapters while it
+waits for the other AI's safety checks.
 
 After installing Node.js or Git, close any open terminal windows and open a new
 one, so it can find them.
@@ -70,8 +84,12 @@ Weaver                  the tool folder: Weaver itself lives here
 - **Watch out for Documents and Desktop.** On many Windows computers they live in
   OneDrive, and on many Macs they live in iCloud. That's why Weaver uses your home
   folder instead.
-- **Keep the book folder inside the Weaver folder.** Weaver's safety checks look
-  for Weaver in the folders above your book.
+- **Keep the book folder inside the Weaver folder,** but not inside
+  `node_modules`, which holds Weaver's own files: installing or updating Weaver
+  replaces everything in it. Weaver's safety checks look for Weaver in the folders
+  above your book.
+- **On Windows, don't use `&` or `^` in folder names.** Windows tools that Weaver
+  relies on can't handle them, so setup refuses those folders.
 - **One book, one folder.** Don't copy the book folder to work on it somewhere
   else. If you ever need to move the folders, run setup again afterwards and redo
   the one-time steps.
@@ -109,10 +127,26 @@ Setup then:
 5. Runs Weaver's health check and prints the steps still to do.
 
 If something is missing, setup stops and tells you what to do in plain words.
+Run setup yourself, in a terminal: your AI isn't allowed to run it, because setup
+installs Weaver itself.
+
 **Setup is safe to run again.** It never deletes your work, so running it again
-later is a good way to check that everything is still in place. After the first
-time, the script is also inside your Weaver folder, in
-`node_modules/@pickbitsai/weaver/scripts`.
+later is a good way to check that everything is still in place. You don't need the
+package file again: leave out `-Source` (Windows) or `--source` (Mac), and setup
+keeps the Weaver that is installed. At the end, setup prints the exact command to
+run it again on your computer. With the standard folders, it is:
+
+**Windows**
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\Weaver\node_modules\@pickbitsai\weaver\scripts\setup-book.ps1" -Id the-salt-road
+```
+
+**Mac**
+
+```sh
+sh ~/Weaver/node_modules/@pickbitsai/weaver/scripts/setup-book.sh --id the-salt-road
+```
 
 PickBits imports your finished manuscript into the new book after setup.
 
@@ -124,18 +158,23 @@ Do these once, after setup. Setup lists the ones that are still left.
 
 1. Open Claude Code in your book folder. (In a terminal opened in the book folder,
    type `claude` and press Enter.)
-2. When it asks whether you trust the folder, answer yes.
-3. If Claude Code was already open there, close it and open it again, so it loads
+2. If it asks you to sign in, sign in with your Claude account in the browser
+   window that opens.
+3. When it asks whether you trust the folder, answer yes.
+4. If Claude Code was already open there, close it and open it again, so it loads
    Weaver's checks.
 
 **Codex**
 
-1. Start a local Codex session in your book folder: one that runs on this
-   computer, not a cloud task.
-2. When Codex asks whether you trust the folder, say yes.
-3. Type `/hooks`. Read each Weaver hook and trust it.
-4. Close Codex and open it again, so it loads Weaver's rules.
-5. On Windows, if Codex says it can't edit files, start it with
+1. Check that the Codex command-line tool is signed in: in a terminal, type
+   `codex login status`. If it doesn't say you are logged in using ChatGPT, type
+   `codex login` and sign in with your ChatGPT account.
+2. Start a local Codex session in your book folder: one that runs on this
+   computer, not a cloud task. Sign in with your ChatGPT account if it asks.
+3. When Codex asks whether you trust the folder, say yes.
+4. Type `/hooks`. Read each Weaver hook and trust it.
+5. Close Codex and open it again, so it loads Weaver's rules.
+6. On Windows, if Codex says it can't edit files, start it with
    `codex --sandbox workspace-write`, or choose **workspace-write** in Codex's
    permissions.
 
