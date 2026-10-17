@@ -227,8 +227,11 @@ test("chapter selection uses ranges and filters counts, places, and threads", as
   assert.deepEqual(parseChapterSelection("2, 4,7-9"), [[2, 2], [4, 4], [7, 9]]);
   assert.deepEqual(parseChapterSelection("1-1000000000"), [[1, 1000000000]]);
   for (const text of ["", "1-", "x", "1,,2", "1.5", "9007199254740992"]) assert.throws(() => parseChapterSelection(text), { message: "Write chapters as numbers or ranges, for example --chapters 1-5 or --chapters 2,4,7-9." });
-  for (const text of ["0", "1,0", "0-3", "3-0"]) assert.throws(() => parseChapterSelection(text), { message: "Chapter numbers start at 1." });
-  assert.throws(() => parseChapterSelection("5-1"), { message: "Write each range from low to high, for example --chapters 1-5." });
+  // Chapter 0 is a prologue, not an error: a chapter-00 book must be selectable.
+  assert.deepEqual(parseChapterSelection("0"), [[0, 0]]);
+  assert.deepEqual(parseChapterSelection("1,0"), [[1, 1], [0, 0]]);
+  assert.deepEqual(parseChapterSelection("0-3"), [[0, 3]]);
+  for (const text of ["5-1", "3-0"]) assert.throws(() => parseChapterSelection(text), { message: "Write each range from low to high, for example --chapters 1-5." });
   const { root } = await richBook(t);
   const { html, data } = buildReport(root, { chapters: "2", now: NOW });
   assert.match(html, /id="chapter-02"/u);
@@ -398,7 +401,18 @@ test("shell hook allows report sharing and denies a protected destination", (t) 
   const hook = (command) => runHook("shell", { cwd: root, tool_name: "Bash", tool_input: { command } });
   assert.equal(hook("npx weaver report --out quality/report.html").hookSpecificOutput.permissionDecision, "deny");
   for (const command of ["npx weaver report --out ../report.html", `npx weaver report --out "${join(outside, "My Reports", "r.html")}"`, "node node_modules/@pickbitsai/weaver/scripts/weaver.mjs report --out ../r.html"]) assert.notEqual(hook(command)?.hookSpecificOutput?.permissionDecision, "deny", command);
-  for (const command of ["npx weaver report --out ../report.html > ../log.txt", "npx weaver report --out ../report.html > ../report.html","npx weaver report --out ../report.html --root ../other-book", "npx weaver report --out ../report.html; cp notes.md ../notes.md", 'npx weaver report --out ../r.html "$(cp ../a.txt ../b.txt)"', "npx weaver export --format md --out ../book.md"]) assert.equal(hook(command)?.hookSpecificOutput?.permissionDecision, "deny", command);
+  // The --out exemption covers only that one destination. A nested command (command or process
+  // substitution) in the same invocation is never exempt, even when it reuses the --out path, so it
+  // cannot reach outside the book, a sibling book's sealed settings, or an alias of a protected folder.
+  const nested = [
+    'npx weaver report --out ../r.html "$(cp ../a.txt ../b.txt)"',
+    'npx weaver report --out ../r.html "$(rm ../r.html)"',
+    'npx weaver report --out ../r.html "`rm ../r.html`"',
+    'npx weaver report --out ../sibling/quality/rules.json "$(cp notes.md ../sibling/quality/rules.json)"',
+    'npx weaver report --out //host/share/book/quality/rules.json "$(cp notes.md //host/share/book/quality/rules.json)"',
+    'npx weaver report --out ../r.html <(rm ../r.html)'
+  ];
+  for (const command of ["npx weaver report --out ../report.html > ../log.txt", "npx weaver report --out ../report.html > ../report.html","npx weaver report --out ../report.html --root ../other-book", "npx weaver report --out ../report.html; cp notes.md ../notes.md", "npx weaver export --format md --out ../book.md", ...nested]) assert.equal(hook(command)?.hookSpecificOutput?.permissionDecision, "deny", command);
 });
 
 test("studio report download has offline headers, navigation, and no book writes", async (t) => {

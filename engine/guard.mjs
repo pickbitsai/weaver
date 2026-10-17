@@ -158,10 +158,14 @@ export function shellGuard(payload, depth = 0) {
     // Also inspect quoted paths with spaces (the flattened tokens handle code
     // strings such as fs.writeFileSync('quality/rules.json', ...)).
     const candidates = [...(withoutLauncher.match(/[^\s<>(),{}]+|>>?/gu) || [])];
-    // `weaver report --out` saves a shareable copy outside the book on purpose; the report command
-    // refuses any destination inside a book, so only that value may name a path outside the book.
-    const reportOut = withoutLauncher !== segment && candidates[0]?.toLowerCase() === "report"
-      ? new Set(words.flatMap((word, index) => (words[index - 1] || "").toLowerCase() === "--out" ? [word, ...word.split(/\s+/u)] : []))
+    // `weaver report --out <file>` is the one command allowed to save outside the book, because the
+    // report itself refuses any destination inside a book. Exempt only that call's single --out value,
+    // never when the raw command nests another command (command or process substitution) that could
+    // reuse the path. `flat` turns backticks into spaces, so test the raw command for them.
+    const nestsCommand = /\$\(|`|<\(|>\(/u.test(command);
+    const outValueAt = words.findIndex((word, index) => (words[index - 1] || "").toLowerCase() === "--out");
+    const reportOut = !nestsCommand && withoutLauncher !== segment && candidates[0]?.toLowerCase() === "report" && outValueAt >= 0
+      ? new Set([words[outValueAt], ...words[outValueAt].split(/\s+/u)])
       : null;
     // After a Weaver launcher the next word is its subcommand (e.g. `review`), not a path.
     if (withoutLauncher !== segment) candidates.shift();

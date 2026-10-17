@@ -31,7 +31,7 @@ export function parseChapterSelection(text) {
     if (!Number.isSafeInteger(low) || !Number.isSafeInteger(high)) throw new Error(syntax);
     return [low, high];
   });
-  if (ranges.some(([low, high]) => !low || !high)) throw new Error("Chapter numbers start at 1.");
+  // Chapter 0 is a valid selection: a book may open with a chapter-00 prologue (loadScenes reads it).
   if (ranges.some(([low, high]) => low > high)) throw new Error("Write each range from low to high, for example --chapters 1-5.");
   return ranges;
 }
