@@ -302,6 +302,66 @@ text. `undo` creates a Git revert, so history is never rewritten. Rejected
 copies are kept on disk and ignored by Git; `history` shows approvals and
 undos. Nothing is ever silently discarded.
 
+## Backup and restore
+
+The book's history lives in Git on this computer. Weaver copies it to a private
+remote repository, such as a private GitHub repository or a Git folder on another
+drive, after every author decision.
+
+Set it up once from a terminal (`backup setup` is an author command):
+
+```bash
+npx weaver backup setup --remote https://github.com/your-name/your-book-backup.git --root ./my-book
+npx weaver backup status --root ./my-book
+```
+
+Create the private repository first and leave it empty: no README, licence or
+`.gitignore`. Setup adds a Git remote named `weaver-backup`, pushes once to check
+that it works, and records the setting and every backup attempt in
+`.weaver/backup.json`, which stays on this computer and out of the book's history.
+Weaver never asks for or stores a password or access token. Give the plain
+address; Git Credential Manager, which comes with Git for Windows, asks you to
+sign in to GitHub the first time.
+
+After that, every approval, accepted proposal, undo, ruling, story-state
+acceptance, settings seal, import and release starts a backup in the background.
+The author's action never waits for it and never fails because of it, and the
+studio checks the backup again when it starts. `npx weaver backup now` backs up
+straight away and says in plain words what to fix when it can't. A backup only
+ever adds to the remote; if the remote has history this computer doesn't, Weaver
+stops and says so instead of overwriting it.
+
+Doctor and the studio footer show the backup state: "Backup: up to date" with
+the time of the last backup, or the problem. They warn when the book isn't backed
+up yet, when the last backup failed, when author decisions have waited more than
+an hour to reach the backup, and when the last successful backup is more than a
+day old. These are warnings; they never stop the author's work.
+
+What is backed up: the book's committed history, which includes every approval
+and every other author decision. Changes still waiting for approval, rejected
+text in `.weaver/rejected/`, proposals and other working files in `.weaver/`,
+built releases and voice profiles stay on this computer. Releases and voice
+profiles can be rebuilt from the history.
+
+Restore on a new computer: install Git and Node.js 22 or newer, install Weaver
+as in [Quick start](#quick-start), then clone the backup and let doctor check it:
+
+```bash
+git clone https://github.com/your-name/your-book-backup.git my-book
+npx weaver doctor --root ./my-book
+npx weaver backup setup --remote https://github.com/your-name/your-book-backup.git --root ./my-book
+```
+
+The last command keeps the new computer backing up to the same place. For a
+backup folder on a drive, clone with `--branch` and the branch name that
+`weaver backup status` shows (for example `--branch main`).
+
+The AI can run `backup status` and `backup now`, because pushing history the
+author has already saved is safe. It can't run `backup setup`, and the shell
+guards block `git remote` and `git push`, so only the author chooses where the
+book is copied. After upgrading Weaver, PickBits re-runs `weaver hooks install`
+and reseals the settings so existing books get these rules.
+
 ## Keep narrative state current
 
 After writing or revising a scene, update its corresponding

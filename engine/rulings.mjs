@@ -7,6 +7,7 @@ import { ensureIdentity } from "./changes.mjs";
 import { GENERATOR, SCHEMA_BASE } from "./identity.mjs";
 import { loadScenes, sha256 } from "./manuscript.mjs";
 import { readerText } from "./prose.mjs";
+import { backupAfterCommit } from "./backup.mjs";
 
 export const LAPSE_NOTE = "an earlier ruling no longer applies because the passage changed";
 const RULINGS_FILE = join("continuity", "rulings.json");
@@ -88,5 +89,6 @@ export function saveRuling(root, project, finding, decision, note = "") {
   const args = ["-C", root, "commit", "--only", "-m", `Ruling: ${decision} ${finding.id}`, "-m", `Approved-with: ${GENERATOR}`, "--", RULINGS_FILE.replaceAll("\\", "/")];
   const commit = spawnSync("git", args, { encoding: "utf8" });
   if (commit.status !== 0) throw new Error(`could not save ruling commit: ${(commit.stderr || commit.stdout || "").trim()}`);
+  backupAfterCommit(root);
   return entry;
 }

@@ -9,9 +9,10 @@ import { dirname, join, posix, resolve, win32 } from "node:path";
 import { normalizedSha256 } from "./integrity.mjs";
 import { ensureIdentity } from "./changes.mjs";
 import { GENERATOR } from "./identity.mjs";
+import { backupAfterCommit } from "./backup.mjs";
 
 export const AI_HOST_ENV = ["CLAUDECODE", "CODEX_CI", "CODEX_SESSION_ID", "CODEX_THREAD_ID"];
-export const AUTHOR_ONLY_COMMANDS = ["approve", "reject", "undo", "rule", "proposal", "state:accept", "release", "import", "guard seal"];
+export const AUTHOR_ONLY_COMMANDS = ["approve", "reject", "undo", "rule", "proposal", "state:accept", "release", "import", "guard seal", "backup setup"];
 export const PROTECTED_PATHS = [
   ".claude/**", ".codex/**", "CLAUDE.md", "AGENTS.md", "project.json", "package.json", "package-lock.json",
   ".gitignore", ".git/**", "node_modules/**", "quality/**", "narrative-state/**", "continuity/**",
@@ -31,14 +32,15 @@ export const WEAVER_DENY_RULES = [
 const SETTINGS_REASON = "Weaver's settings can't be changed by the AI; if a rule seems wrong, tell the author so they can rule on the finding.";
 const TOOL_REASON = "Weaver itself is installed and maintained by PickBits; tell the author if it seems broken.";
 const AUTHOR_REASON = "That's the author's decision; ask them to use the author page (npx weaver studio).";
+const BACKUP_REASON = "Choosing where the book is backed up is the author's decision; ask them to run `npx weaver backup setup` in a terminal.";
 
 export function authorCommandRefusal(command, env = process.env) {
   if (!AUTHOR_ONLY_COMMANDS.includes(command) || !AI_HOST_ENV.some((name) => Object.keys(env).some((key) => key.toUpperCase() === name && env[key] !== undefined))) return null;
   return {
     error: command === "approve" ? "Approving is the author's decision" : "That's the author's decision",
     command,
-    why: "Weaver only lets the author approve, reject, undo, rule on findings, accept story state, import, release or seal settings.",
-    fix: "Ask the author to do this on the author page: run `npx weaver studio` and open http://127.0.0.1:4187. For sealing settings, contact PickBits."
+    why: "Weaver only lets the author approve, reject, undo, rule on findings, accept story state, import, release, seal settings or set up backups.",
+    fix: command === "backup setup" ? "Ask the author to run `npx weaver backup setup --remote <address>` in a terminal in the book folder. The author page (`npx weaver studio`) shows whether the book is backed up." : "Ask the author to do this on the author page: run `npx weaver studio` and open http://127.0.0.1:4187. For sealing settings, contact PickBits."
   };
 }
 
@@ -86,7 +88,7 @@ export function editGuard(payload) {
   return null;
 }
 
-export const GIT_WRITES = new Set("commit reset revert rebase restore checkout switch merge cherry-pick stash push pull am apply filter-branch filter-repo update-ref config tag clean gc reflog notes replace".split(" "));
+export const GIT_WRITES = new Set("commit reset revert rebase restore checkout switch merge cherry-pick stash push pull am apply filter-branch filter-repo update-ref config tag clean gc reflog notes replace remote".split(" "));
 export const INSTALL_WRITES = new Set("install i add uninstall remove update upgrade ci link rebuild".split(" "));
 const READS = new Set("cat type get-content gc head tail less more grep rg select-string sls findstr wc ls dir get-childitem gci test-path stat".split(" "));
 const executable = (token) => token.replaceAll("\\", "/").split("/").at(-1).replace(/\.(?:exe|cmd)$/iu, "").toLowerCase();
@@ -118,8 +120,9 @@ export function shellGuard(payload, depth = 0) {
   // Flatten quotes to see commands inside cmd /c, powershell -Command, bash -c,
   // and code strings. This is deliberately conservative, not a shell parser.
   const flat = command.replace(/["'`]/gu, " ");
-  const author = /(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+(approve|reject|undo|rule|proposal|state:accept|release|import|guard\s+seal)(?=\s|$|[;&|])/iu.exec(flat);
+  const author = /(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+(approve|reject|undo|rule|proposal|state:accept|release|import|guard\s+seal|backup\s+setup)(?=\s|$|[;&|])/iu.exec(flat);
   if (author) {
+    if (author[1].toLowerCase().startsWith("backup")) return deny(BACKUP_REASON);
     const chapter = /--chapter(?:=|\s+)(\d+)/iu.exec(flat)?.[1];
     return deny(chapter && author[1].toLowerCase() === "approve" ? `That's the author's decision; ask them to approve chapter ${chapter} on the author page.` : AUTHOR_REASON);
   }
@@ -211,6 +214,7 @@ export function sealBookSettings(root, project) {
   ensureIdentity(root, project);
   git(root, ["add", "--", ".weaver/guard.json"]);
   git(root, ["commit", "--only", "-m", "Seal book settings", "-m", `Approved-with: ${GENERATOR}`, "--", ".weaver/guard.json"]);
+  backupAfterCommit(root);
   return { path, changed: true };
 }
 

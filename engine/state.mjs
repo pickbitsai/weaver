@@ -11,6 +11,7 @@ import { GENERATOR, SCHEMA_BASE } from "./identity.mjs";
 import { spawnSync } from "node:child_process";
 import { relative } from "node:path";
 import { ensureIdentity } from "./changes.mjs";
+import { backupAfterCommit } from "./backup.mjs";
 import { writeRecord, writeTextRecord } from "./records.mjs";
 
 const FACT_KINDS = new Set(["location", "knowledge", "possession", "relationship", "event", "time"]);
@@ -126,6 +127,7 @@ export function acceptNarrativeState(root, project, throughSceneId = null) {
   if (stage.status !== 0) throw new Error(`Could not stage story state: ${stage.stderr}`);
   const commit = spawnSync("git", ["-C", root, "commit", "--only", "-m", `Accept story state through ${scenes[targetIndex].id}`, "-m", `Approved-with: ${GENERATOR}`, "--", ...paths], { encoding: "utf8" });
   if (commit.status !== 0) throw new Error(`Could not save story state: ${commit.stderr || commit.stdout}`);
+  backupAfterCommit(root);
   return narrativeStateStatus(root, project);
 }
 

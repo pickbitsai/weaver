@@ -21,6 +21,7 @@ assert.ok(npmCli, "npm_execpath is required; run this check through npm");
 
 function run(command, args, cwd) {
   const result = spawnSync(command, args, {
+    windowsHide: true,
     cwd,
     env,
     encoding: "utf8",
@@ -44,6 +45,7 @@ function weaver(args) {
 
 function weaverResult(args) {
   return spawnSync(process.execPath, [npmCli, "exec", "--", "weaver", ...args], {
+    windowsHide: true,
     cwd: consumer,
     env,
     encoding: "utf8",
@@ -133,6 +135,10 @@ try {
   assert.equal(status.project_id, "consumer-book");
   assert.equal(status.scenes, 1);
 
+  const backup = join(sandbox, "backup.git");
+  run("git", ["init", "--bare", "-q", backup], sandbox);
+  assert.match(weaver(["backup", "setup", "--remote", backup, "--root", book]), /Backup set up/u);
+
   const scenePath = join(book, "manuscript", "chapter-01", "scene-01", "scene.md");
   const approvedBefore = readFileSync(scenePath, "utf8");
   writeFileSync(scenePath, approvedBefore.replace("different state.", "approved then undone state."));
@@ -156,6 +162,17 @@ try {
   assert.equal(release.release_id, "consumer-smoke");
   assert.equal(release.source.scene_count, 1);
 
+  const backupBranch = run("git", ["-C", book, "symbolic-ref", "--short", "HEAD"], sandbox).trim();
+  const backupHead = run("git", ["-C", book, "rev-parse", "HEAD"], sandbox).trim();
+  const backupDeadline = Date.now() + 40_000;
+  while (true) {
+    const copied = run("git", ["-C", backup, "rev-parse", "--verify", `refs/heads/${backupBranch}`], sandbox).trim();
+    if (copied === backupHead && !existsSync(join(book, ".weaver/backup.lock")) && !existsSync(join(book, ".weaver/backup.pending"))) break;
+    assert.ok(Date.now() < backupDeadline, "installed backup worker did not finish");
+    await new Promise((ready) => setTimeout(ready, 100));
+  }
+  assert.equal(JSON.parse(weaver(["backup", "status", "--json", "--root", book])).state, "up-to-date");
+
   appendFileSync(
     join(consumer, "node_modules", "@pickbitsai", "weaver", "engine", "state.mjs"),
     " "
@@ -175,5 +192,10 @@ try {
   console.log("consumer smoke passed: packed, installed, initialized, checked, and released");
 } finally {
   studioChild?.kill();
+  const backupCleanupDeadline = Date.now() + 40_000;
+  while (existsSync(join(book, ".weaver/backup.lock")) || existsSync(join(book, ".weaver/backup.pending"))) {
+    assert.ok(Date.now() < backupCleanupDeadline, "backup worker was still running at cleanup");
+    await new Promise((ready) => setTimeout(ready, 100));
+  }
   rmSync(sandbox, { recursive: true, force: true });
 }
