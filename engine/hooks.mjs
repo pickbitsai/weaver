@@ -10,7 +10,7 @@ import { loadRules, runRules, runRulesForScene } from "./rules.mjs";
 import { blockingRuleRegression } from "./rule-regression.mjs";
 import { otherPendingChapters } from "./changes.mjs";
 import { runVoiceCheck } from "./voice.mjs";
-import { deny, editGuard, shellGuard, hookBookRoot, AUTHOR_ONLY_COMMANDS, GIT_WRITES, INSTALL_WRITES, WEAVER_DENY_RULES } from "./guard.mjs";
+import { deny, editGuard, shellGuard, hookBookRoot, AUTHOR_ONLY_COMMANDS, GIT_WRITES, INSTALL_WRITES, WEAVER_DENY_RULES, GIT_CREDENTIAL_COMMANDS } from "./guard.mjs";
 
 const MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
 const SHELL_MATCHER = "Bash|PowerShell";
@@ -81,7 +81,12 @@ export function codexRules() {
   ].map((prefix) => [...prefix, ...command.split(" ")]));
   patterns.push([["git", "git.exe"], [...GIT_WRITES]], [["git", "git.exe"], "branch", ["-D", "-d", "-m", "-M", "--delete", "--move"]],
     [["npm", "npm.cmd", "pnpm", "pnpm.cmd", "yarn", "yarn.cmd"], [...INSTALL_WRITES]]);
-  return `# Weaver author guardrails. Project-scoped; restart Codex after installation.\n${patterns.map((pattern) => `prefix_rule(pattern=${JSON.stringify(pattern)}, decision="forbidden", justification="Leave book decisions, history, settings and tool installation to the author; use the Weaver author page.")`).join("\n")}\n`;
+  const credentialPatterns = [[["git", "git.exe"], GIT_CREDENTIAL_COMMANDS], [GIT_CREDENTIAL_COMMANDS.flatMap((word) => [`git-${word}`, `git-${word}.exe`])]];
+  const justification = (pattern) => credentialPatterns.includes(pattern) ? "Git sign-in details belong to the author; Weaver never needs them."
+    : pattern.at(-2) === "backup" && pattern.at(-1) === "setup" ? "Choosing where the book is backed up is the author's decision; ask them to run npx weaver backup setup in a terminal."
+    : "Leave book decisions, history, settings and tool installation to the author; use the Weaver author page.";
+  patterns.push(...credentialPatterns);
+  return `# Weaver author guardrails. Project-scoped; restart Codex after installation.\n${patterns.map((pattern) => `prefix_rule(pattern=${JSON.stringify(pattern)}, decision="forbidden", justification="${justification(pattern)}")`).join("\n")}\n`;
 }
 
 function installCodexHooks(root, { userRules = false, codexHome = process.env.CODEX_HOME || join(homedir(), ".codex") } = {}) {

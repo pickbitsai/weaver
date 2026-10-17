@@ -33,6 +33,8 @@ const SETTINGS_REASON = "Weaver's settings can't be changed by the AI; if a rule
 const TOOL_REASON = "Weaver itself is installed and maintained by PickBits; tell the author if it seems broken.";
 const AUTHOR_REASON = "That's the author's decision; ask them to use the author page (npx weaver studio).";
 const BACKUP_REASON = "Choosing where the book is backed up is the author's decision; ask them to run `npx weaver backup setup` in a terminal.";
+export const GIT_CREDENTIAL_COMMANDS = ["credential", "credential-manager", "credential-manager-core", "credential-store", "credential-cache", "credential-wincred", "credential-osxkeychain", "credential-libsecret"];
+export const CREDENTIAL_REASON = "Git sign-in details belong to the author, and Weaver never needs them; ask the author if a backup needs signing in.";
 
 export function authorCommandRefusal(command, env = process.env) {
   if (!AUTHOR_ONLY_COMMANDS.includes(command) || !AI_HOST_ENV.some((name) => Object.keys(env).some((key) => key.toUpperCase() === name && env[key] !== undefined))) return null;
@@ -126,6 +128,8 @@ export function shellGuard(payload, depth = 0) {
     const chapter = /--chapter(?:=|\s+)(\d+)/iu.exec(flat)?.[1];
     return deny(chapter && author[1].toLowerCase() === "approve" ? `That's the author's decision; ask them to approve chapter ${chapter} on the author page.` : AUTHOR_REASON);
   }
+  if (/(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+backup(?=[\s;&|]|$)[^;&|\r\n]*[^\S\r\n](?:setup|--remote)(?=\s|=|[;&|]|$)/iu.test(flat)) return deny(BACKUP_REASON);
+  if (/(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+guard(?=[\s;&|]|$)[^;&|\r\n]*[^\S\r\n]seal(?=\s|=|[;&|]|$)/iu.test(flat)) return deny(AUTHOR_REASON);
   let project = {};
   if (existsSync(join(root, "project.json"))) project = JSON.parse(readFileSync(join(root, "project.json"), "utf8"));
   const port = Number(project.studio_port ?? project.studio?.port ?? 4187);
@@ -137,10 +141,12 @@ export function shellGuard(payload, depth = 0) {
   for (const tokens of [words, shellWords(flat)]) {
     for (let index = 0; index < tokens.length; index += 1) {
       const name = executable(tokens[index]);
+      if (name.startsWith("git-credential")) return deny(CREDENTIAL_REASON);
       let next = index + 1;
       if (name === "git") {
         next = gitCommandIndex(tokens, index);
         const subcommand = tokens[next]?.toLowerCase();
+        if (subcommand?.startsWith("credential")) return deny(CREDENTIAL_REASON);
         if (GIT_WRITES.has(subcommand) || (subcommand === "branch" && tokens.slice(next + 1).some((token) => /^-(?:[dDmM]|.*[dDmM])$|^--(?:delete|move)(?:=|$)/u.test(token)))) return deny(`Book history belongs to the author. ${AUTHOR_REASON}`);
       }
       if (["npm", "pnpm", "yarn"].includes(name)) {
