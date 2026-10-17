@@ -5,13 +5,15 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { request } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { runInNewContext } from "node:vm";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import { buildReport, collectReportData, markdownToHtml, parseChapterSelection, parseSections, PRIVACY_LINE, renderReport, REPORT_SECTIONS, reportCsp, reportFileName, wordDiff, writeReport } from "../engine/report.mjs";
+import { buildReport, collectReportData, markdownToHtml, parseChapterSelection, parseSections, PRIVACY_LINE, renderReport, REPORT_MARKER, REPORT_SECTIONS, reportCsp, reportFileName, wordDiff, writeReport } from "../engine/report.mjs";
+import { approveChapter, undoApproval } from "../engine/changes.mjs";
+import { buildRelease } from "../engine/release.mjs";
 import { initializeProject } from "../engine/init.mjs";
 import { readProject } from "../engine/project.mjs";
 import { seedCharacters } from "../engine/characters.mjs";
@@ -20,7 +22,7 @@ import { repairInputs, proposalPath } from "../engine/repair.mjs";
 import { writeRecord } from "../engine/records.mjs";
 import { AUTHOR_ONLY_COMMANDS } from "../engine/guard.mjs";
 import { runHook } from "../engine/hooks.mjs";
-import { startStudio, esc } from "../engine/studio.mjs";
+import { approvalProgress, doctorStatus, startStudio, esc } from "../engine/studio.mjs";
 import { GENERATOR } from "../engine/identity.mjs";
 import { authorEnv } from "./helpers/env.mjs";
 import { git, makeBook } from "./helpers/book.mjs";
@@ -28,7 +30,7 @@ import { git, makeBook } from "./helpers/book.mjs";
 const NOW = new Date("2026-10-17T14:05:00.000Z");
 const CLI = resolve("scripts/weaver.mjs");
 const HOST = resolve("test/fixtures/fake-host.mjs");
-const HOSTILE = ['<script>alert("x")</script>', '" onmouseover="alert(1)', "' onfocus='alert(2)", "&amp; &lt;b&gt; &#x3C;", "https://evil.example/pixel.png", "javascript:alert(3)", "<img src=x onerror=alert(4)>", "[click](https://evil.example/)", "</title></style><style>body{display:none}</style>", "Q".repeat(4000)].join(" ");
+const HOSTILE = ['<script>alert("x")</script>', '" onmouseover="alert(1)', "' onfocus='alert(2)", "&amp; &lt;b&gt; &#x3C;", "https://evil.example/pixel.png", "javascript:alert(3)", "<img src=x onerror=alert(4)>", "[click](https://evil.example/)", "</title></style><style>body{display:none}</style>", '<meta http-equiv="refresh" content="0;url=https://evil.example/">', '<a href="https://evil.example/">link</a>', "Q".repeat(4000)].join(" ");
 const save = (path, doc) => writeFileSync(path, JSON.stringify(doc, null, 2));
 function temporary(t) { const path = mkdtempSync(join(tmpdir(), "weaver-report-")); t.after(() => rmSync(path, { recursive: true, force: true })); return path; }
 function snapshot(root, prefix = "") {
@@ -55,7 +57,7 @@ async function richBook(t, { hostile = false } = {}) {
   const book = makeBook(t), { root, project, paths } = book;
   const text = hostile ? HOSTILE : "The silver map belongs to Rill.";
   project.title = hostile ? HOSTILE : "The Lantern Map";
-  project.author = "Synthetic Author";
+  project.author = hostile ? HOSTILE : "Synthetic Author";
   project.chapters = { 1: hostile ? HOSTILE : "Rill", 2: "Tovan" };
   project.host = { command: process.execPath, args: [HOST, "review-triage"], concurrency: 3, timeout_seconds: 10 };
   save(join(root, "project.json"), project);
@@ -63,7 +65,8 @@ async function richBook(t, { hostile = false } = {}) {
   writeFileSync(paths[2], readFileSync(paths[2], "utf8").replace("quiet hill", "murky hill"));
   seedCharacters(root, ["Rill", "Tovan"]);
   const registry = JSON.parse(readFileSync(join(root, "world-bible", "characters.json"), "utf8"));
-  registry.characters[0].aliases = ["the cartographer"];
+  registry.characters[0].aliases = hostile ? ["the cartographer", HOSTILE] : ["the cartographer"];
+  if (hostile) registry.characters.push({ id: "hostile-guest", name: HOSTILE, aliases: [HOSTILE], pov: false });
   save(join(root, "world-bible", "characters.json"), registry);
   const rules = JSON.parse(readFileSync(join(root, "quality", "rules.json"), "utf8"));
   rules.rules[0].message = hostile ? HOSTILE : "Choose a precise description.";
@@ -77,6 +80,11 @@ async function richBook(t, { hostile = false } = {}) {
   writeFileSync(join(root, "narrative-state", "2-1.md"), "## Active threads\n\n- Advanced: Tovan's watch\n");
   mkdirSync(join(root, "continuity"), { recursive: true });
   save(join(root, "continuity", "facts.json"), { subjects: { rill: [{ kind: "location", value: hostile ? HOSTILE : "Eastern Gate", scene_id: "1-1", quote: text }], tovan: [{ kind: "location", value: "North Hill", scene_id: "2-1", quote: "Tovan watches the hill." }], world: [{ kind: "location", value: "Eastern Gate", scene_id: "1-1", quote: "The gate stands open." }] } });
+  if (hostile) {
+    const facts = JSON.parse(readFileSync(join(root, "continuity", "facts.json"), "utf8"));
+    facts.subjects["hostile-guest"] = [{ kind: "location", value: "Eastern Gate", scene_id: "1-1", quote: text }];
+    save(join(root, "continuity", "facts.json"), facts);
+  }
   await runReview(root, project, { chapter: 1, run: true, onProgress: () => {} });
   const proposal = deterministicProposal(root, project, 1, hostile ? HOSTILE : "");
   return { ...book, proposal };
@@ -85,6 +93,18 @@ async function richBook(t, { hostile = false } = {}) {
 test("report has the complete offline outline, data, counts, and an exact script hash", async (t) => {
   const { root } = await richBook(t);
   const { html, data } = buildReport(root, { now: NOW });
+  const f = data.chapters[0].findings, judgment = f.judgment[0];
+  const judgmentHtml = html.split("<h4>Judgment (triaged)</h4>")[1].split('<details class="notes">')[0];
+  assert.ok(judgmentHtml.includes(`<blockquote>${esc(judgment.quote)}</blockquote>`));
+  assert.ok(judgmentHtml.includes(esc(judgment.issue)));
+  const ruleHtml = html.split("<h4>Style rules</h4>")[1].split("<h4>Voice</h4>")[0];
+  assert.ok(ruleHtml.includes(`<blockquote>${esc(f.rule[0].quote)}</blockquote>`));
+  const notesHtml = html.match(/<details class="notes">([\s\S]*?)<\/details>/u)[1];
+  assert.ok(notesHtml.includes('class="finding"'));
+  assert.ok(notesHtml.includes(esc(f.notes[0].issue)));
+  assert.ok(html.includes("<strong>1</strong>declined by the AI"));
+  assert.ok(html.includes(REPORT_MARKER));
+  assert.ok(html.indexOf(REPORT_MARKER) < html.indexOf('<meta name="color-scheme"'));
   for (const text of ['<!doctype html>', '<html lang="en">', '<meta charset="utf-8">', `<meta name="generator" content="${GENERATOR}">`, 'http-equiv="Content-Security-Policy"', "prefers-color-scheme:dark", "@media print", "overflow-wrap:anywhere", `Generated with ${GENERATOR} on 2026-10-17 at 14:05 UTC.`, "0 of 2 chapters approved since import", 'class="tiles"', 'class="tile"', 'id="chapter-01"', "Covers all 2 chapters.", "Choose a precise description.", "murky", "Judgment (triaged)", 'class="notes"><summary>Notes (', "<del>", "<ins>", "Word change: −1", "The author must choose the meaning.", "The paragraph no longer matches.", "The silver map belongs to Rill.", "Canon entries", "Silver map", "Eastern Gate", "Rill in scene 1-1", "The <strong>lantern</strong> journey", "Applies to all text", 'id="setup-check"', "Speaking character audit (this book)", "Confirmed fixed:", "Judgment repairs proposed:", "Partly fixed:", '<p class="file">report-notes.md</p>', "blocking · Scene 1-1", "style rules (3 blocking)"]) assert.ok(html.includes(text), text);
   assert.match(html, /<body>\s*<p class="privacy" role="note"><strong>Contains manuscript excerpts\. Share only with people you trust\.<\/strong><\/p>/u);
   assert.equal((html.match(/<style>/gu) || []).length, 1);
@@ -117,12 +137,25 @@ test("report has the complete offline outline, data, counts, and an exact script
   assert.ok(html.includes("the AI made no edit. Why: The author must choose the meaning."));
   assert.equal(data.state.threads[0].entries[0].scene_id, "1-1");
   assert.equal(Object.hasOwn(data.state.threads[0].entries[0], "scene"), false);
-  assert.equal(JSON.stringify(data).includes(root), false);
+  assert.equal(JSON.stringify(data).includes(JSON.stringify(root).slice(1, -1)), false);
+  assert.equal(JSON.stringify(data).includes(root.replaceAll("\\", "/")), false);
+  const reviewPath = join(root, "review", "chapter-01-continuity.json");
+  const review = JSON.parse(readFileSync(reviewPath, "utf8"));
+  review.findings[0].reasons = "not a list";
+  save(reviewPath, review);
+  const coerced = buildReport(root, { sections: "findings" });
+  assert.deepEqual(coerced.data.chapters[0].findings.judgment.find((item) => item.issue === review.findings[0].issue).reasons, []);
+  assert.doesNotMatch(coerced.html, /This chapter could not be shown:/u);
 });
 
 test("hostile book text stays escaped text in every report surface", async (t) => {
   const { root } = await richBook(t, { hostile: true });
   const { html, data } = buildReport(root, { now: NOW });
+  assert.ok(html.includes(`<p>by ${esc(HOSTILE)}</p>`));
+  assert.ok(html.includes(`(also: the cartographer, ${esc(HOSTILE)})`));
+  assert.ok(html.includes(`<li>${esc(HOSTILE)} (also: ${esc(HOSTILE)})</li>`));
+  assert.ok(html.includes(`${esc(HOSTILE)} in scene 1-1`));
+  assert.ok(Buffer.from(html).subarray(0, 4096).toString().includes(REPORT_MARKER));
   assert.equal((html.match(/<script/giu) || []).length, 1);
   assert.equal((html.match(/<style/giu) || []).length, 1);
   assert.doesNotMatch(html, /<[a-z][^>]*\son[a-z]+\s*=/iu);
@@ -140,6 +173,24 @@ test("hostile book text stays escaped text in every report surface", async (t) =
   assert.equal(data.chapters[0].proposal.edits[0].after.includes(HOSTILE), true);
   assert.ok(data.chapters[0].findings.judgment.some((item) => item.label.startsWith("<script>")));
   assert.equal(html.includes(root), false);
+  const replaceText = (value, key) => {
+    if (["sections", "generated_at"].includes(key)) return value;
+    if (typeof value === "string") return HOSTILE;
+    if (Array.isArray(value)) return value.map((item) => replaceText(item));
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, replaceText(item, name)]));
+    return value;
+  };
+  const swept = renderReport(replaceText(collectReportData(root, { now: NOW })));
+  assert.equal((swept.match(/<script/giu) || []).length, 1);
+  assert.equal((swept.match(/<style/giu) || []).length, 1);
+  assert.doesNotMatch(swept, /<[a-z][^>]*\son[a-z]+\s*=/iu);
+  assert.doesNotMatch(swept, /<(?:img|link|iframe|base|form|object|embed)\b/iu);
+  const normal = buildReport(makeBook(t).root).html;
+  assert.equal((swept.match(/<meta\b/giu) || []).length, (normal.match(/<meta\b/giu) || []).length);
+  for (const tag of swept.match(/<[a-z!][^>]*>/giu) || []) {
+    assert.doesNotMatch(tag, /:\/\/|javascript:/iu, tag);
+    for (const match of tag.matchAll(/\s(?:href|src)\s*=\s*["']([^"']*)["']/giu)) assert.ok(match[1].startsWith("#"), tag);
+  }
 });
 
 test("minimal Markdown escapes first, preserves code and word underscores, and never makes links", () => {
@@ -182,7 +233,7 @@ test("chapter selection uses ranges and filters counts, places, and threads", as
   const { html, data } = buildReport(root, { chapters: "2", now: NOW });
   assert.match(html, /id="chapter-02"/u);
   assert.doesNotMatch(html, /id="chapter-01"/u);
-  assert.match(html, /Covers chapters 2 of 2\./u);
+  assert.match(html, /Covers chapter 2 of 2\./u);
   assert.equal(data.counts.findings.total, 1);
   assert.equal(data.counts.findings.rule_blocking, 1);
   assert.equal(data.counts.findings.notes, 0);
@@ -190,7 +241,7 @@ test("chapter selection uses ranges and filters counts, places, and threads", as
   assert.equal(data.counts.changes_waiting, 1);
   assert.deepEqual(data.state.places.map((item) => item.value), ["North Hill"]);
   assert.deepEqual(data.state.threads.map((item) => item.value), ["Tovan's watch"]);
-  assert.throws(() => buildReport(root, { chapters: "9" }), { message: "No chapters match --chapters 9. This book's chapters are 1 to 2." });
+  assert.throws(() => buildReport(root, { chapters: "9" }), { message: "No chapters match --chapters 9. This book has chapters 1–2." });
   assert.match(buildReport(root, { chapters: "1-9" }).html, /Covers chapters 1–2 of 2\./u);
   const copy = structuredClone(data);
   copy.selection = { all: false, chapters: [2, 4, 7, 8, 9], total: 12 };
@@ -228,6 +279,9 @@ test("empty and missing manuscript folders produce a useful report without a war
     for (const text of [PRIVACY_LINE, "This book has no chapters yet", 'id="world-bible"', 'id="rules"', 'id="setup-check"', "No world bible notes yet.", "No places recorded yet.", "No threads recorded yet."]) assert.ok(html.includes(text), text);
     assert.equal(data.manuscript_error, null);
     assert.deepEqual(data.warnings, []);
+    assert.ok(html.includes('<p class="coverage">This book has no chapters yet.</p>'));
+    assert.ok(html.includes("<p>No chapters to approve yet.</p>"));
+    assert.doesNotMatch(html, /0 of 0|Covers all 0|<progress/u);
     assert.throws(() => buildReport(root, { chapters: "1" }), { message: "This book has no chapters yet, so --chapters can't be used." });
   }
 });
@@ -266,11 +320,11 @@ test("CLI writes and replaces reports, supports JSON and AI hosts, and refuses u
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Refusing to replace r\.html: it is not a Weaver report\. Choose a new file name\./u);
   assert.deepEqual(readFileSync(out), original);
-  for (const path of [join(outside, "notes.txt"), join(root, "quality", "r.html"), join(root, ".weaver", "r.html"), join(root, "manuscript", "r.html"), join(root, "narrative-state", "r.html")]) {
+  for (const path of [join(outside, "notes.txt"), join(root, "quality", "r.html"), join(root, ".weaver", "r.html"), join(root, "manuscript", "r.html"), join(root, "narrative-state", "r.html"), join(root, "r.html"), join(root, "notes", "r.html")]) {
     const args = path.includes("quality") ? [`--out=${path}`] : ["--out", path];
     result = cli(root, args);
     assert.equal(result.status, 1, path);
-    assert.match(result.stderr, path.endsWith(".txt") ? /Save the report as an \.html file/u : /Weaver won't save the report inside the book's protected or manuscript folders/u);
+    assert.match(result.stderr, path.endsWith(".txt") ? /Save the report as an \.html file/u : /Weaver saves reports outside book folders/u);
     assert.equal(existsSync(path), false);
   }
   result = cli(root, []);
@@ -278,7 +332,7 @@ test("CLI writes and replaces reports, supports JSON and AI hosts, and refuses u
   assert.match(result.stderr, /usage: weaver report --out <file\.html>/u);
   result = cli(root, ["--out", join(outside, "no-match.html"), "--chapters", "9"]);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /No chapters match --chapters 9\. This book's chapters are 1 to 2\./u);
+  assert.match(result.stderr, /No chapters match --chapters 9\. This book has chapters 1–2\./u);
   assert.equal(existsSync(join(outside, "no-match.html")), false);
   const jsonOut = join(outside, "json.html");
   result = cli(root, ["--out", jsonOut, "--json"]);
@@ -311,7 +365,7 @@ test("write guards cover folders, custom content roots, case, the first 4 KB and
   mkdirSync(folder);
   assert.throws(() => writeReport(root, folder), { message: "That path is a folder. Give a file name, for example --out report.html." });
   const tooLate = join(outside, "late.html");
-  const bytes = "x".repeat(4096) + '<meta name="generator" content="PickBits Weaver';
+  const bytes = "x".repeat(4096) + REPORT_MARKER;
   writeFileSync(tooLate, bytes);
   assert.throws(() => writeReport(root, tooLate), /it is not a Weaver report/u);
   assert.equal(readFileSync(tooLate, "utf8"), bytes);
@@ -329,19 +383,22 @@ test("write guards cover folders, custom content roots, case, the first 4 KB and
   project.source_root = "drafts";
   project.state_root = "story-memory";
   save(join(root, "project.json"), project);
-  for (const name of ["drafts", "story-memory", ...(process.platform === "win32" ? ["DRAFTS", "STORY-MEMORY", "QUALITY"] : [])]) {
+  for (const name of ["drafts", "story-memory", "", "notes", ...(process.platform === "win32" ? ["DRAFTS", "STORY-MEMORY", "QUALITY"] : [])]) {
     const destination = join(root, name, "r.html");
-    assert.throws(() => writeReport(root, destination), /protected or manuscript folders/u);
+    assert.throws(() => writeReport(root, destination), /Weaver saves reports outside book folders/u);
     assert.equal(existsSync(destination), false);
   }
-  assert.doesNotThrow(() => writeReport(root, join(root, "drafts-other", "r.html")));
+  assert.throws(() => writeReport(root, join(root, "drafts-other", "r.html")), /Weaver saves reports outside book folders/u);
+  assert.equal(existsSync(join(root, "drafts-other", "r.html")), false);
+  assert.doesNotThrow(() => writeReport(root, join(outside, "drafts-other", "r.html")));
 });
 
 test("shell hook allows report sharing and denies a protected destination", (t) => {
-  const { root } = makeBook(t);
+  const { root } = makeBook(t), outside = temporary(t);
   const hook = (command) => runHook("shell", { cwd: root, tool_name: "Bash", tool_input: { command } });
   assert.equal(hook("npx weaver report --out quality/report.html").hookSpecificOutput.permissionDecision, "deny");
-  assert.notEqual(hook("npx weaver report --out report.html")?.hookSpecificOutput?.permissionDecision, "deny");
+  for (const command of ["npx weaver report --out ../report.html", `npx weaver report --out "${join(outside, "My Reports", "r.html")}"`, "node node_modules/@pickbitsai/weaver/scripts/weaver.mjs report --out ../r.html"]) assert.notEqual(hook(command)?.hookSpecificOutput?.permissionDecision, "deny", command);
+  for (const command of ["npx weaver report --out ../report.html > ../log.txt", "npx weaver report --out ../report.html > ../report.html","npx weaver report --out ../report.html --root ../other-book", "npx weaver report --out ../report.html; cp notes.md ../notes.md", 'npx weaver report --out ../r.html "$(cp ../a.txt ../b.txt)"', "npx weaver export --format md --out ../book.md"]) assert.equal(hook(command)?.hookSpecificOutput?.permissionDecision, "deny", command);
 });
 
 test("studio report download has offline headers, navigation, and no book writes", async (t) => {
@@ -359,7 +416,9 @@ test("studio report download has offline headers, navigation, and no book writes
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
   assert.equal(response.headers.get("referrer-policy"), "no-referrer");
-  assert.ok((await response.text()).includes(PRIVACY_LINE));
+  const downloaded = await response.text();
+  assert.ok(downloaded.includes(PRIVACY_LINE));
+  for (const value of ['id="chapters"', 'id="chapter-01"', 'class="findings"', 'class="proposal"', 'id="world-bible"', 'id="rules"', REPORT_MARKER]) assert.ok(downloaded.includes(value), value);
   assert.deepEqual(snapshot(root), files);
   assert.equal(git(root, "status", "--porcelain"), status);
   assert.match(await (await fetch(base)).text(), /href="\/report\.html">Download report<\/a>/u);
@@ -511,13 +570,319 @@ test("reports follow protection through folder shortcuts", (t) => {
   const { root } = makeBook(t), outside = temporary(t), alias = join(outside, "book-alias");
   symlinkSync(root, alias, process.platform === "win32" ? "junction" : "dir");
   for (const folder of ["quality", "manuscript", "narrative-state"]) {
-    assert.throws(() => writeReport(root, join(alias, folder, "r.html")), /protected or manuscript folders/u);
+    assert.throws(() => writeReport(root, join(alias, folder, "r.html")), /Weaver saves reports outside book folders/u);
     assert.equal(existsSync(join(root, folder, "r.html")), false);
   }
   // A protected folder that is itself a shortcut to somewhere else is still refused by its name.
   const elsewhere = join(outside, "weaver-elsewhere");
   mkdirSync(elsewhere);
   symlinkSync(elsewhere, join(root, ".weaver"), process.platform === "win32" ? "junction" : "dir");
-  assert.throws(() => writeReport(root, join(root, ".weaver", "r.html")), /protected or manuscript folders/u);
+  assert.throws(() => writeReport(root, join(root, ".weaver", "r.html")), /Weaver saves reports outside book folders/u);
   assert.equal(existsSync(join(elsewhere, "r.html")), false);
+});
+
+test("unreadable scenes warn authors and never look like an empty book", (t) => {
+  const { root, paths } = makeBook(t), out = join(temporary(t), "unreadable.html");
+  writeFileSync(paths[0], readFileSync(paths[0], "utf8").replace(/^---\r?\n/gmu, ""));
+  const result = cli(root, ["--out", out]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Warning: The manuscript could not be read:/u);
+  assert.match(result.stderr, /this scene file needs its two --- separator lines/u);
+  const html = readFileSync(out, "utf8");
+  for (const text of ["No chapters could be read.", "Chapters can't be shown because the manuscript could not be read.", "Fix the scene file named at the top of this report, then make the report again.", "Progress can't be shown because the manuscript could not be read.", "Chapters could not be read.", "manuscript/chapter-01/scene-01/scene.md"]) assert.ok(html.includes(text), text);
+  assert.doesNotMatch(html, /This book has no chapters yet|Import a manuscript|0 of 0|<progress/u);
+  const json = cli(root, ["--out", out, "--json"]);
+  assert.equal(json.status, 0, json.stderr);
+  assert.ok(JSON.parse(json.stdout).warnings.some((warning) => warning.startsWith("The manuscript could not be read:") && warning.includes("this scene file needs its two --- separator lines")));
+  const before = readFileSync(out);
+  const filtered = cli(root, ["--out", out, "--chapters", "1-5"]);
+  assert.equal(filtered.status, 1);
+  assert.match(filtered.stderr, /The manuscript could not be read, so --chapters can't be used:/u);
+  assert.deepEqual(readFileSync(out), before);
+});
+
+test("Reader Editions are never replaced by reports", (t) => {
+  const { root, project } = makeBook(t), outside = temporary(t);
+  save(join(root, "quality", "rules.json"), { version: 1, rules: [] });
+  project.release_root = "dist";
+  project.require_current_state_for_release = false;
+  save(join(root, "project.json"), project);
+  buildRelease(root, readProject(root), "beta-01");
+  const release = join(root, "dist", "beta-01", "synthetic-book-beta-01.html"), copy = join(outside, "reader.html");
+  copyFileSync(release, copy);
+  const bytes = readFileSync(release);
+  assert.equal(bytes.toString().includes(REPORT_MARKER), false);
+  assert.throws(() => writeReport(root, copy), /it is not a Weaver report/u);
+  assert.throws(() => writeReport(root, release), /Weaver saves reports outside book folders/u);
+  assert.deepEqual(readFileSync(copy), bytes);
+  assert.deepEqual(readFileSync(release), bytes);
+  const fresh = join(outside, "report.html");
+  writeReport(root, fresh);
+  assert.ok(readFileSync(fresh, "utf8").includes(REPORT_MARKER));
+});
+
+test("report destinations stay outside every book through case and folder links", (t) => {
+  const { root } = makeBook(t), { root: other } = makeBook(t), outside = temporary(t);
+  symlinkSync(join(root, "quality"), join(outside, "q-link"), process.platform === "win32" ? "junction" : "dir");
+  for (const destination of [join(root, "QUALITY", "r.html"), join(other, "r.html"), join(other, "quality", "x.html"), join(outside, "q-link", "r.html")]) {
+    assert.throws(() => writeReport(root, destination), /Weaver saves reports outside book folders/u);
+    assert.equal(existsSync(destination), false);
+  }
+  assert.equal(existsSync(join(root, "quality", "r.html")), false);
+  const result = spawnSync(process.execPath, [CLI, "report", `--root=${other}`, "--out=quality/x.html"], { cwd: root, env: { ...authorEnv(), CLAUDECODE: "1" }, encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Weaver saves reports outside book folders/u);
+  assert.equal(existsSync(join(root, "quality", "x.html")), false);
+  assert.equal(existsSync(join(other, "quality", "x.html")), false);
+});
+
+test("report file shortcuts and broken ancestor shortcuts are refused", async (t) => {
+  const { root } = makeBook(t), outside = temporary(t);
+  const folderTarget = join(outside, "folder"), folderLink = join(outside, "folder-link.html");
+  mkdirSync(folderTarget);
+  symlinkSync(folderTarget, folderLink, process.platform === "win32" ? "junction" : "dir");
+  assert.throws(() => writeReport(root, folderLink), /shortcut/u);
+  assert.deepEqual(readdirSync(folderTarget), []);
+  for (const broken of [false, true]) await t.test(broken ? "broken file link" : "existing file link", (t) => {
+    const target = join(root, "quality", broken ? "new.html" : "existing.html"), link = join(outside, broken ? "dangling.html" : "linked.html");
+    if (!broken) writeFileSync(target, `${REPORT_MARKER}\nKeep this report.`);
+    const before = broken ? null : readFileSync(target);
+    try { symlinkSync(target, link, "file"); }
+    catch (error) { if (error.code === "EPERM") { t.skip("File symlinks need permission on this system."); return; } throw error; }
+    assert.throws(() => writeReport(root, link), /shortcut/u);
+    assert.ok(lstatSync(link).isSymbolicLink());
+    if (broken) assert.equal(existsSync(target), false);
+    else assert.deepEqual(readFileSync(target), before);
+  });
+  await t.test("broken folder ancestor", (t) => {
+    const target = join(outside, "absent"), link = join(outside, "broken-folder");
+    try { symlinkSync(target, link, process.platform === "win32" ? "junction" : "dir"); }
+    catch (error) { if (error.code === "EPERM") { t.skip("Folder links need permission on this system."); return; } throw error; }
+    assert.throws(() => writeReport(root, join(link, "nested", "r.html")), /shortcut/u);
+    assert.equal(existsSync(target), false);
+  });
+});
+
+test("Windows namespaces, streams, admin shares and short names cannot enter a book", { skip: process.platform !== "win32" }, async (t) => {
+  const { root } = makeBook(t), outside = temporary(t);
+  const ordinary = { message: "Use an ordinary file path for the report, for example --out ../report.html." };
+  // A namespace path without a drive colon (\\?\UNC\...) is refused by its prefix alone.
+  for (const destination of [`\\\\?\\UNC\\localhost\\${root[0]}$${root.slice(2)}\\quality\\unc.html`, "\\\\?\\" + join(root, "quality", "ns1.html"), "\\\\.\\" + join(root, "quality", "ns2.html"),"//?/" + join(root, "quality", "ns3.html").replaceAll("\\", "/"), "//./" + join(root, "quality", "ns4.html").replaceAll("\\", "/"), `${root}\\quality::$INDEX_ALLOCATION\\ads.html`, join(outside, "notes.txt") + ":hidden.html"]) {
+    assert.throws(() => writeReport(root, destination), ordinary);
+    assert.equal(existsSync(destination), false);
+  }
+  for (const name of ["unc.html", "ns1.html", "ns2.html", "ns3.html", "ns4.html", "ads.html"]) assert.equal(existsSync(join(root, "quality", name)), false);
+  assert.equal(existsSync(join(outside, "notes.txt")), false);
+  const share = `\\\\localhost\\${root[0]}$${root.slice(2)}`;
+  await t.test("admin share", { skip: !existsSync(join(share, "project.json")) }, () => {
+    assert.throws(() => writeReport(root, join(share, "quality", "share.html")), /Weaver saves reports outside book folders/u);
+    assert.equal(existsSync(join(root, "quality", "share.html")), false);
+  });
+  const short = (path) => {
+    const result = spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"for %I in ("${path}") do @echo %~sI"`], { encoding: "utf8", windowsVerbatimArguments: true });
+    const value = result.status === 0 ? result.stdout.trim() : "";
+    return value && value.toLowerCase() !== path.toLowerCase() && existsSync(value) ? value : null;
+  };
+  for (const folder of ["narrative-state", ".codex", "manuscript"]) {
+    const alias = short(join(root, folder));
+    await t.test(`short name: ${folder}`, { skip: !alias }, () => {
+      assert.throws(() => writeReport(root, join(alias, "r.html")), /Weaver saves reports outside book folders/u);
+      assert.equal(existsSync(join(root, folder, "r.html")), false);
+    });
+  }
+});
+
+test("destination checks fail closed and read book markers with a BOM", (t) => {
+  const { root } = makeBook(t), outside = temporary(t), book = join(outside, "another-book");
+  mkdirSync(book);
+  const destination = join(book, "nested", "r.html");
+  for (const content of ['\uFEFF{"kind":"book"}', "broken project"]) {
+    writeFileSync(join(book, "project.json"), content);
+    assert.throws(() => writeReport(root, destination), { message: `Weaver saves reports outside book folders, so the AI working in a book can't change them and they stay out of the book's history. Save this one outside "${basename(book)}", for example --out "${join(dirname(book), "r.html")}".` });
+    assert.equal(existsSync(destination), false);
+  }
+  const originalRead = fs.readFileSync;
+  const unreadable = t.mock.method(fs, "readFileSync", (path, ...args) => {
+    if (String(path) === join(book, "project.json")) throw new Error("Cannot read this file.");
+    return originalRead(path, ...args);
+  });
+  syncBuiltinESMExports();
+  try { assert.throws(() => writeReport(root, destination), /Weaver saves reports outside book folders/u); }
+  finally { unreadable.mock.restore(); syncBuiltinESMExports(); }
+  assert.equal(existsSync(destination), false);
+  writeFileSync(join(book, "project.json"), '{"kind":"notes"}');
+  assert.doesNotThrow(() => writeReport(root, destination));
+  // Another tool's project.json saved with a byte-order mark is still read, so it is not a book.
+  writeFileSync(join(book, "project.json"), '﻿{"kind":"notes"}');
+  assert.doesNotThrow(() => writeReport(root, destination));
+  const unresolvable = t.mock.method(fs.realpathSync, "native", () => { throw new Error("Cannot resolve the path."); });
+  const blocked = join(outside, "not-created", "r.html");
+  try { assert.throws(() => writeReport(root, blocked), { message: "Weaver couldn't check where that path leads, so it won't save the report there. Choose another folder." }); }
+  finally { unresolvable.mock.restore(); }
+  assert.equal(existsSync(dirname(blocked)), false);
+});
+
+test("AI hosts save reports outside the book without changing its history", (t) => {
+  const holder = temporary(t), root = join(holder, "book");
+  initializeProject(root, { projectId: "holder-book", title: "Holder Book", empty: true });
+  const status = git(root, "status", "--porcelain");
+  assert.notEqual(runHook("shell", { cwd: root, tool_name: "Bash", tool_input: { command: "npx weaver report --out ../share.html" } })?.hookSpecificOutput?.permissionDecision, "deny");
+  const run = (out) => spawnSync(process.execPath, [CLI, "report", "--out", out], { cwd: root, env: { ...authorEnv(), CLAUDECODE: "1" }, encoding: "utf8" });
+  const shared = run("../share.html");
+  assert.equal(shared.status, 0, shared.stderr);
+  assert.ok(readFileSync(join(holder, "share.html"), "utf8").includes(REPORT_MARKER));
+  assert.equal(git(root, "status", "--porcelain"), status);
+  const inside = run("share.html");
+  assert.equal(inside.status, 1);
+  assert.match(inside.stderr, /Weaver saves reports outside book folders/u);
+  assert.equal(existsSync(join(root, "share.html")), false);
+  assert.equal(git(root, "status", "--porcelain"), status);
+});
+
+test("Undo still works after sharing and removes approval progress", (t) => {
+  const { root, paths } = makeBook(t), out = join(temporary(t), "r.html");
+  writeFileSync(paths[1], readFileSync(paths[1], "utf8").replace("narrow bridge", "old stone bridge"));
+  approveChapter(root, readProject(root), 1);
+  assert.deepEqual(collectReportData(root).progress.approved, [1]);
+  assert.doesNotThrow(() => writeReport(root, out));
+  assert.throws(() => writeReport(root, join(root, "report.html")), /Weaver saves reports outside book folders/u);
+  assert.equal(existsSync(join(root, "report.html")), false);
+  assert.doesNotThrow(() => undoApproval(root));
+  const { html, data } = buildReport(root);
+  assert.deepEqual(data.progress.approved, []);
+  const heading = html.match(/id="chapter-01" open><summary>(.*?)<\/summary>/su)[1];
+  assert.doesNotMatch(heading, /approved/u);
+});
+
+test("progress counts multiple approvals, repair approvals, reverts and the import baseline", (t) => {
+  const { root } = makeBook(t);
+  const scenes = [{ chapter: 1 }, { chapter: 2 }];
+  const commit = (subject) => git(root, "commit", "--allow-empty", "-qm", subject);
+  commit("Approve chapter 1: first");
+  commit("Repairs accepted, chapter 1 (1 of 2 edits): second");
+  commit('Revert "Repairs accepted, chapter 1 (1 of 2 edits): second"');
+  assert.deepEqual([...approvalProgress(root, scenes).approved], [1]);
+  commit('Revert "Approve chapter 1: first"');
+  assert.deepEqual([...approvalProgress(root, scenes).approved], []);
+  commit("Repairs accepted, chapter 2");
+  assert.deepEqual([...approvalProgress(root, scenes).approved], [2]);
+  commit("Import original manuscript: another import");
+  assert.deepEqual(approvalProgress(root, scenes), { approved: new Set(), total: 2 });
+});
+
+test("bare report selection flags fail without writing a file", (t) => {
+  const { root } = makeBook(t), outside = temporary(t);
+  for (const [flag, message] of [["--chapters", "Write chapters as numbers or ranges, for example --chapters 1-5 or --chapters 2,4,7-9."], ["--sections", "Choose at least one report section: summary, findings, proposals, canon, state, rules."]]) {
+    const out = join(outside, `${flag.slice(2)}.html`);
+    const result = spawnSync(process.execPath, [CLI, "report", "--root", root, "--out", out, flag], { env: authorEnv(), encoding: "utf8" });
+    assert.equal(result.status, 1);
+    assert.ok(result.stderr.includes(message), result.stderr);
+    assert.equal(existsSync(out), false);
+  }
+});
+
+test("damaged proposals stay local to their chapter during collection and rendering", async (t) => {
+  const { root, project } = makeBook(t);
+  const record = deterministicProposal(root, project);
+  deterministicProposal(root, project, 2);
+  for (const edit of [{ ...record.edits[0], before: undefined }, { ...record.edits[0], after: 7 }, null, "broken edit"]) {
+    writeRecord(proposalPath(root, 1), { ...record, edits: [edit] });
+    let result;
+    assert.doesNotThrow(() => { result = buildReport(root); });
+    const { html, data } = result;
+    assert.ok(data.warnings.includes("Chapter 1 proposal could not be read: This proposal record is damaged (an edit is missing its before or after text). Ask again for a fresh proposal."));
+    assert.ok(html.includes("Proposals could not be read: This proposal record is damaged"));
+    assert.equal(data.chapters[1].proposal.edits.length, 1);
+    assert.ok(html.split('id="chapter-02"')[1].includes("Tovan watches the quiet hill"));
+    assert.equal(data.counts.proposals.total, 1);
+    assert.equal(data.counts.edits_waiting, 1);
+  }
+  const server = await startStudio({ root, port: 0 });
+  t.after(() => new Promise((done) => server.close(done)));
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/report.html`);
+  assert.equal(response.status, 200);
+  assert.ok((await response.text()).includes("Proposals could not be read: This proposal record is damaged"));
+  const data = collectReportData(root);
+  data.chapters[0].title = HOSTILE;
+  data.chapters[0].proposal = { status: "ready", edits: "not a list" };
+  const html = renderReport(data);
+  assert.ok(html.includes(`<details class="chapter" id="chapter-01" open><summary><h2>Chapter 1: ${esc(HOSTILE)}</h2></summary><p class="notice">This chapter could not be shown:`));
+  assert.ok(html.split('id="chapter-02"')[1].includes("Tovan watches the quiet hill"));
+  data.chapters[0].proposal.edits = { map() { throw new Error(HOSTILE); } };
+  const escapedError = renderReport(data);
+  assert.ok(escapedError.includes(`This chapter could not be shown: ${esc(HOSTILE)}`));
+  assert.equal((escapedError.match(/<script/giu) || []).length, 1);
+});
+
+test("proposal text, lists and word changes are coerced defensively", (t) => {
+  const { root, project } = makeBook(t), original = deterministicProposal(root, project);
+  const collect = (record) => { writeRecord(proposalPath(root, 1), record); const result = buildReport(root); assert.deepEqual(result.data.warnings, []); return result.data.chapters[0].proposal; };
+  for (const [input, output] of [["findings", null], ["edits", "edits"], ["declined", "declined"], ["dropped_edits", "dropped"], ["accepted_edits", "accepted_edits"]]) {
+    const proposal = collect({ ...original, [input]: "not a list" });
+    if (output) assert.deepEqual(proposal[output], []);
+    else assert.equal(proposal.edits[0].findings[0].label, "");
+  }
+  for (const [input, output] of [["finding_ids", "findings"], ["findings_fixed", "fixed"], ["findings_proposed", "proposed"], ["findings_partly_fixed", "partly_fixed"]]) {
+    const proposal = collect({ ...original, edits: [{ ...original.edits[0], [input]: { damaged: true } }] });
+    assert.deepEqual(proposal.edits[0][output], []);
+  }
+  for (const delta of ["12", null, Infinity, -Infinity, NaN, {}]) assert.equal(collect({ ...original, edits: [{ ...original.edits[0], word_delta: delta }] }).edits[0].word_delta, 0);
+  const odd = structuredClone(original);
+  odd.findings[0].reasons = "not a list";
+  Object.assign(odd.findings[0], { rule_id: 42, source: null, reviewer_title: null, issue: false, quote: 7, scene_id: 17 });
+  Object.assign(odd.edits[0], { scene_id: 12, reason: false, validation: { damaged: true } });
+  odd.declined = [{ finding_id: odd.findings[0].id, reason: null }];
+  odd.dropped_edits = [{ scene_id: 14, why: 123 }];
+  const proposal = collect(odd);
+  assert.equal(proposal.edits[0].scene_id, "12");
+  assert.equal(proposal.edits[0].reason, "false");
+  assert.equal(proposal.edits[0].validation, "[object Object]");
+  assert.equal(proposal.edits[0].findings[0].label, "42");
+  assert.equal(proposal.edits[0].findings[0].issue, "false");
+  assert.equal(proposal.declined[0].reason, "");
+  assert.equal(proposal.declined[0].quote, "7");
+  // An empty quote falls back to the excerpt, exactly as the studio's finding cards do.
+  const fallback = structuredClone(original);
+  Object.assign(fallback.findings[0], { quote: "", excerpt: "Rill keeps the murky map." });
+  fallback.declined = [{ finding_id: fallback.findings[0].id, reason: "Author decides." }];
+  assert.equal(collect(fallback).declined[0].quote, "Rill keeps the murky map.");
+  assert.equal(proposal.declined[0].scene_id, "17");
+  assert.equal(proposal.dropped[0].scene_id, "14");
+  assert.equal(proposal.dropped[0].why, "123");
+});
+
+test("chapter mismatch wording lists real compact ranges and a singular chapter", (t) => {
+  const { root, paths } = makeBook(t);
+  const scene = join(root, "manuscript", "chapter-05", "scene-01", "scene.md");
+  mkdirSync(dirname(scene), { recursive: true });
+  writeFileSync(scene, readFileSync(paths[2], "utf8").replace("# Scene 2-1", "# Scene 5-1"));
+  assert.throws(() => buildReport(root, { chapters: "3-4" }), { message: "No chapters match --chapters 3-4. This book has chapters 1–2, 5." });
+  const single = join(temporary(t), "book");
+  initializeProject(single, { projectId: "single-book", title: "Single Book" });
+  assert.throws(() => buildReport(single, { chapters: "9" }), { message: "No chapters match --chapters 9. This book has chapter 1." });
+});
+
+test("canon files with a byte-order mark still show entries", (t) => {
+  const { root } = makeBook(t);
+  writeFileSync(join(root, "world-bible", "canon.json"), '\uFEFF{"entries":[{"name":"Lantern","owner":"Rill"}]}');
+  const { html, data } = buildReport(root, { sections: "canon" });
+  assert.deepEqual(data.warnings, []);
+  assert.equal(data.world_bible.canon.entries[0].title, "Lantern");
+  assert.ok(html.includes("<h4>Lantern"));
+  assert.ok(html.includes("<dd>Rill</dd>"));
+});
+
+test("doctorStatus shares the studio summary without changing its input", () => {
+  const warning = { problem: "Check these settings." }, blocking = { problem: "Restore these settings." };
+  const doctor = { blocking: [blocking], checks: [{ id: "guardrails-installed", status: "warning", findings: [warning] }, { id: "protected-files-clean", status: "blocking", findings: [blocking] }, { id: "install-integrity", status: "pass" }], guardrails: { claude: { label: "Claude guardrails" }, codex: { label: "Codex guardrails" } } };
+  const before = structuredClone(doctor);
+  assert.deepEqual(doctorStatus(doctor), { first: blocking, guardOn: false, guardProblem: blocking, integrity: true, labels: ["Claude guardrails", "Codex guardrails"] });
+  assert.deepEqual(doctor, before);
+  doctor.checks[1].status = "pass";
+  assert.equal(doctorStatus(doctor).guardOn, true);
+  assert.equal(doctorStatus(doctor).guardProblem, warning);
+  doctor.checks[0].status = "pass";
+  doctor.checks[2].status = "warning";
+  assert.equal(doctorStatus(doctor).guardProblem, undefined);
+  assert.equal(doctorStatus(doctor).integrity, false);
 });

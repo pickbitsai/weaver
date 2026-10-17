@@ -106,10 +106,10 @@ refusal. The author can read and decide entirely on the local page.
 
 ## Shareable report
 
-Run `npx weaver report --out my-book-report.html --root ./my-book`, or use
-**Download report** in the studio. The report is one self-contained file that opens
-offline in any browser, supports light and dark mode, and prints well with
-**Print or save as PDF**.
+Run `npx weaver report --out my-book-report.html --root ./my-book` from the folder
+that holds the book, or use **Download report** in the studio. The report is one
+self-contained file that opens offline in any browser, supports light and dark
+mode, and prints well with **Print or save as PDF**.
 
 It includes the title and version stamp, progress and counts, per-chapter findings,
 proposed repairs as before/after word diffs with reasons, declined findings,
@@ -118,8 +118,10 @@ dropped edits, world bible, story so far, rules, and setup check. Use `--chapter
 sections (also available: `canon,state,rules`).
 
 The report contains manuscript excerpts: share it only with people you trust.
-Weaver never replaces a file that is not a Weaver report, and refuses to save
-reports inside the book's protected or manuscript folders.
+Weaver saves reports only outside book folders, so the AI working in a book can't
+change them and they stay out of the book's history. From inside the book, use
+`--out ../my-book-report.html`. Weaver never replaces a file that is not a Weaver
+report, such as a Reader Edition release.
 
 ## Repair a finished book
 
@@ -517,6 +519,7 @@ settings-seal checks.
 | `export --format md\|docx --out <file>` | Export the current manuscript without overwriting the source or an existing file |
 | `doctor` | Check the book folder, Git, host, and Weaver installation |
 | `studio` | Open the local author page (`--port N` supported) |
+| `report --out <file.html>` | Save a shareable offline report outside the book (`--chapters`, `--sections`, `--json` supported) |
 | `status` | Summarize manuscript hash, words, scenes, and state freshness |
 | `check` | Run project, critical-path, repetition, and state gates |
 | `rules` | Run deterministic style rules (`--scene`, `--json` supported) |

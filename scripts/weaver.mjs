@@ -22,11 +22,11 @@ import { runReview, submitReviewPacket } from "../engine/review.mjs";
 import { reviewerWarnings } from "../engine/reviewers.mjs";
 import { rulingStatuses, saveRuling } from "../engine/rulings.mjs";
 import { startStudio } from "../engine/studio.mjs";
-import { writeReport } from "../engine/report.mjs";
 import { authorCommandRefusal, sealBookSettings } from "../engine/guard.mjs";
 import { acceptProposal, rejectProposal, listProposals, repairChapter, submitRepairPacket, proposalSummary } from "../engine/repair.mjs";
 import { runBook } from "../engine/run.mjs";
 import { withHost } from "../engine/host.mjs";
+import { writeReport } from "../engine/report.mjs";
 
 const argv = process.argv.slice(2);
 const command = argv.shift() || "help";
@@ -194,7 +194,8 @@ try {
   } else if (command === "report") {
     const out = option("--out");
     if (!out) throw new Error("usage: weaver report --out <file.html> [--chapters 1-5] [--sections summary,findings,proposals,canon,state,rules] [--root directory] [--json]");
-    const result = writeReport(root, out, { chapters: option("--chapters"), sections: option("--sections") });
+    const chapters = option("--chapters"), sections = option("--sections");
+    const result = writeReport(root, out, { chapters: chapters === undefined ? "" : chapters, sections: sections === undefined ? "" : sections });
     for (const warning of result.warnings) process.stderr.write(`Warning: ${warning}\n`);
     for (const finding of result.doctor.blocking || []) process.stderr.write(`Warning: ${finding.problem}. ${finding.why} ${finding.fix}\n`);
     if (argv.includes("--json")) print({ out: result.out, bytes: result.bytes, chapters: result.chapters, sections: result.sections, warnings: result.warnings });

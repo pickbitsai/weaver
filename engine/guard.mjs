@@ -158,6 +158,11 @@ export function shellGuard(payload, depth = 0) {
     // Also inspect quoted paths with spaces (the flattened tokens handle code
     // strings such as fs.writeFileSync('quality/rules.json', ...)).
     const candidates = [...(withoutLauncher.match(/[^\s<>(),{}]+|>>?/gu) || [])];
+    // `weaver report --out` saves a shareable copy outside the book on purpose; the report command
+    // refuses any destination inside a book, so only that value may name a path outside the book.
+    const reportOut = withoutLauncher !== segment && candidates[0]?.toLowerCase() === "report"
+      ? new Set(words.flatMap((word, index) => (words[index - 1] || "").toLowerCase() === "--out" ? [word, ...word.split(/\s+/u)] : []))
+      : null;
     // After a Weaver launcher the next word is its subcommand (e.g. `review`), not a path.
     if (withoutLauncher !== segment) candidates.shift();
     for (const match of command.matchAll(/["']([^"'\r\n]+)["']/gu)) if (/^[a-z]:[\\/]|^\.{1,2}[\\/]|^\//iu.test(match[1])) candidates.push(match[1]);
@@ -167,6 +172,7 @@ export function shellGuard(payload, depth = 0) {
       // A bare word is not necessarily a path; named protected files and
       // explicit absolute/parent paths are the useful signals here.
       const redirectTarget = new RegExp(`>+\\s*${token.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?:\\s|$)`, "u").test(segment);
+      if (reportOut?.has(token) && blocked === "outside the book folder" && !redirectTarget) continue;
       if (blocked && (!readOnly || redirectTarget)) return deny(`${blocked}: ${blocked.toLowerCase().startsWith("node_modules/") ? TOOL_REASON : SETTINGS_REASON}`);
     }
   }

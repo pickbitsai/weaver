@@ -110,6 +110,11 @@ try {
   const reportHtml = readFileSync(repairReport, "utf8");
   assert.ok(reportHtml.startsWith("<!doctype html>"));
   assert.ok(reportHtml.includes("Contains manuscript excerpts. Share only with people you trust."));
+  const insideReport = join(repairBook, "inside.html");
+  const refusedReport = weaverResult(["report", "--out", insideReport, "--root", repairBook]);
+  assert.notEqual(refusedReport.status, 0);
+  assert.match(refusedReport.stderr, /Weaver saves reports outside book folders/u);
+  assert.equal(existsSync(insideReport), false);
 
   const doctor = JSON.parse(weaver(["doctor", "--json", "--root", book]));
   assert.equal(doctor.checks.find((check) => check.id === "install-integrity").status, "pass");

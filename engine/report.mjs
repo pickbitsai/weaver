@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
-import { approvalProgress, diffWords, esc, localMessage, placeGroups, threadGroups } from "./studio.mjs";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { approvalProgress, diffWords, doctorStatus, esc, localMessage, placeGroups, threadGroups } from "./studio.mjs";
 import { collectFindings } from "./findings.mjs";
 import { listProposals } from "./repair.mjs";
 import { describePendingChanges } from "./changes.mjs";
@@ -15,10 +15,10 @@ import { listLenses } from "./reviewers.mjs";
 import { worldBible } from "./review.mjs";
 import { narrativeStateStatus, readFactsLedger } from "./state.mjs";
 import { runDoctor } from "./doctor.mjs";
-import { GUARD_CHECK_IDS, protectedPath } from "./guard.mjs";
 import { GENERATOR } from "./identity.mjs";
 
 export const REPORT_SECTIONS = ["summary", "findings", "proposals", "canon", "state", "rules"];
+export const REPORT_MARKER = '<meta name="weaver-report" content="shareable-report">';
 export const PRIVACY_LINE = "Contains manuscript excerpts. Share only with people you trust.";
 const USAGE = "usage: weaver report --out <file.html> [--chapters 1-5] [--sections summary,findings,proposals,canon,state,rules] [--root directory] [--json]";
 
@@ -112,7 +112,7 @@ function canonData(root) {
   const path = join(root, "world-bible", "canon.json");
   if (!existsSync(path)) return null;
   let doc;
-  try { doc = JSON.parse(readFileSync(path, "utf8")); }
+  try { doc = JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/u, "")); }
   catch { return { error: "world-bible/canon.json could not be read, so its entries are not shown." }; }
   const entries = Array.isArray(doc) ? doc : doc?.entries;
   if (!Array.isArray(entries)) return { json: JSON.stringify(doc, null, 2) };
@@ -131,19 +131,26 @@ function canonData(root) {
   }) };
 }
 
+const textValue = (value) => value == null ? "" : String(value);
+const listValue = (value) => Array.isArray(value) ? value : [];
+
 function normalizeFinding(item) {
-  return { id: item.id, kind: item.kind, label: item.reviewer_title || item.source || item.rule_id, severity: item.severity,
-    scene_id: item.scene_id, paragraph: item.paragraph, quote: item.quote || item.excerpt || item.line || "", issue: item.issue, repair: item.repair,
-    ruling: item.ruling == null ? null : String(item.ruling), reasons: item.reasons || [], sounds_like: item.maybe_sounds_like?.character || null, count: item.count, limit: item.limit };
+  // Same fallbacks as the studio's finding cards: an empty quote falls back to the excerpt or line.
+  return { id: textValue(item?.id), kind: textValue(item?.kind), label: textValue(item?.reviewer_title || item?.source || item?.rule_id), severity: textValue(item?.severity),
+    scene_id: textValue(item?.scene_id), paragraph: item?.paragraph, quote: textValue(item?.quote || item?.excerpt || item?.line), issue: textValue(item?.issue), repair: textValue(item?.repair),
+    ruling: item?.ruling == null ? null : String(item.ruling), reasons: listValue(item?.reasons).map(textValue), sounds_like: textValue(item?.maybe_sounds_like?.character), count: item?.count, limit: item?.limit };
 }
 
 function normalizeProposal(record, scrub) {
-  const findings = new Map((record.findings || []).map((item) => [item.id, normalizeFinding(item)]));
-  return { status: record.status, created_at: record.created_at, accepted_at: record.accepted_at, accepted_edits: record.accepted_edits || [], error: record.error ? scrub(record.error) : null,
-    edits: (record.edits || []).map((edit) => ({ number: edit.number, scene_id: edit.scene_id, paragraph: edit.paragraph, before: edit.before, after: edit.after, reason: edit.reason, word_delta: edit.word_delta, validation: edit.validation,
-      findings: (edit.finding_ids || []).map((id) => ({ id, label: findings.get(id)?.label, issue: findings.get(id)?.issue })), fixed: edit.findings_fixed || [], proposed: edit.findings_proposed || [], partly_fixed: edit.findings_partly_fixed || [] })),
-    declined: (record.declined || []).map((item) => { const finding = findings.get(item.finding_id); return { finding_id: item.finding_id, reason: item.reason, label: finding?.label, scene_id: finding?.scene_id, paragraph: finding?.paragraph, quote: finding?.quote, issue: finding?.issue }; }),
-    dropped: (record.dropped_edits || []).map((edit) => ({ number: edit.number, scene_id: edit.scene_id, paragraph: edit.paragraph, why: edit.why })) };
+  const findings = new Map(listValue(record.findings).map((item) => [textValue(item?.id), normalizeFinding(item)]));
+  return { status: textValue(record.status), created_at: textValue(record.created_at), accepted_at: textValue(record.accepted_at), accepted_edits: listValue(record.accepted_edits).map(textValue), error: record.error ? scrub(textValue(record.error)) : null,
+    edits: listValue(record.edits).map((edit) => {
+      if (!edit || typeof edit !== "object" || typeof edit.before !== "string" || typeof edit.after !== "string") throw new Error("an edit is missing its before or after text");
+      return { number: edit.number, scene_id: textValue(edit.scene_id), paragraph: edit.paragraph, before: edit.before, after: edit.after, reason: textValue(edit.reason), word_delta: Number.isFinite(edit.word_delta) ? edit.word_delta : 0, validation: textValue(edit.validation),
+        findings: listValue(edit.finding_ids).map((id) => ({ id: textValue(id), label: textValue(findings.get(textValue(id))?.label), issue: textValue(findings.get(textValue(id))?.issue) })), fixed: listValue(edit.findings_fixed).map(textValue), proposed: listValue(edit.findings_proposed).map(textValue), partly_fixed: listValue(edit.findings_partly_fixed).map(textValue) };
+    }),
+    declined: listValue(record.declined).map((item) => { const finding = findings.get(textValue(item?.finding_id)); return { finding_id: textValue(item?.finding_id), reason: textValue(item?.reason), label: textValue(finding?.label), scene_id: textValue(finding?.scene_id), paragraph: finding?.paragraph, quote: textValue(finding?.quote), issue: textValue(finding?.issue) }; }),
+    dropped: listValue(record.dropped_edits).map((edit) => ({ number: edit?.number, scene_id: textValue(edit?.scene_id), paragraph: edit?.paragraph, why: textValue(edit?.why) })) };
 }
 
 export function collectReportData(root, { chapters = null, sections = null, now = new Date() } = {}) {
@@ -155,16 +162,30 @@ export function collectReportData(root, { chapters = null, sections = null, now 
   const part = (name, read) => { try { return read(); } catch (error) { const message = scrub(error.message); warnings.push(`${name} could not be read: ${message}`); return { error: message }; } };
   let scenes = [], manuscript_error = null;
   try { scenes = loadScenes(root, project); }
-  catch (error) { if (!/^(?:no canonical scenes found|missing source root)/u.test(error.message)) manuscript_error = scrub(error.message); }
+  catch (error) {
+    if (!/^(?:no canonical scenes found|missing source root)/u.test(error.message)) {
+      const separators = /^(.*): expected metadata and footer separators$/u.exec(error.message);
+      manuscript_error = separators ? `${scrub(separators[1]).replaceAll("\\", "/")}: this scene file needs its two --- separator lines (one after the scene heading, one before the footer).` : scrub(error.message);
+      warnings.push(`The manuscript could not be read: ${manuscript_error}`);
+    }
+  }
   const all_chapters = [...new Set(scenes.map((scene) => scene.chapter))].sort((a, b) => a - b);
+  if (selection && manuscript_error) throw new Error(`The manuscript could not be read, so --chapters can't be used: ${manuscript_error}`);
   if (selection && !all_chapters.length) throw new Error("This book has no chapters yet, so --chapters can't be used.");
   const chosen = all_chapters.filter((n) => !selection || selection.some(([low, high]) => n >= low && n <= high));
-  if (selection && !chosen.length) throw new Error(`No chapters match --chapters ${chapters}. This book's chapters are ${all_chapters[0]} to ${all_chapters.at(-1)}.`);
+  if (selection && !chosen.length) throw new Error(`No chapters match --chapters ${chapters}. This book has ${all_chapters.length === 1 ? "chapter" : "chapters"} ${chapterRanges(all_chapters)}.`);
   const approved = approvalProgress(root, scenes);
   const progress = { approved: [...approved.approved].sort((a, b) => a - b), total: approved.total };
   const needs = (...names) => names.some((name) => sections.includes(name));
   const collected = scenes.length && needs("summary", "findings", "proposals") ? part("Findings", () => collectFindings(root, project, { all: true })) : null;
-  const proposals = scenes.length && needs("summary", "proposals") ? part("Proposals", () => listProposals(root, project, { scenes, collected: collected?.error ? undefined : collected }).map((record) => ({ chapter: record.chapter, ...normalizeProposal(record, scrub) }))) : null;
+  const proposals = scenes.length && needs("summary", "proposals") ? part("Proposals", () => listProposals(root, project, { scenes, collected: collected?.error ? undefined : collected }).map((record) => {
+    try { return { chapter: record.chapter, ...normalizeProposal(record, scrub) }; }
+    catch (error) {
+      const message = `This proposal record is damaged (${scrub(error.message)}). Ask again for a fresh proposal.`;
+      warnings.push(`Chapter ${record.chapter} proposal could not be read: ${message}`);
+      return { chapter: record.chapter, error: message };
+    }
+  })) : null;
   const pending = scenes.length ? part("Changes waiting", () => describePendingChanges(root, project)) : { chapters: [] };
   const characters = needs("canon", "state", "rules") ? part("Characters", () => loadCharacters(root).characters) : [];
   let world_bible = null;
@@ -185,10 +206,9 @@ export function collectReportData(root, { chapters = null, sections = null, now 
   const reviewers = needs("rules") ? part("Reviewers", () => listLenses(root).map(({ title, builtin }) => ({ title, builtin }))) : null;
   const doctor = part("Setup check", () => {
     const report = runDoctor({ bookRoot: root });
-    const checks = report.checks.filter((check) => GUARD_CHECK_IDS.includes(check.id));
-    const problem = (checks.find((check) => check.status === "blocking") || checks.find((check) => check.status === "warning"))?.findings[0];
-    return { ok: report.ok, blocking: report.blocking.map(({ problem, why, fix }) => ({ problem: scrub(problem), why: scrub(why), fix: scrub(fix) })), guardrails_on: !checks.some((check) => check.status === "blocking"), guard_problem: problem ? scrub(problem.problem) : null,
-      integrity_ok: report.checks.find((check) => check.id === "install-integrity")?.status === "pass", guardrail_labels: Object.values(report.guardrails).map((item) => scrub(item.label)) };
+    const status = doctorStatus(report);
+    return { ok: report.ok, blocking: report.blocking.map(({ problem, why, fix }) => ({ problem: scrub(problem), why: scrub(why), fix: scrub(fix) })), guardrails_on: status.guardOn, guard_problem: status.guardProblem ? scrub(status.guardProblem.problem) : null,
+      integrity_ok: status.integrity, guardrail_labels: status.labels.map(scrub) };
   });
   const chapterData = chosen.map((number) => {
     const queue = collected?.chapters?.find((item) => item.chapter === number);
@@ -230,15 +250,20 @@ const listHtml = (items, empty = "None.") => items.length ? `<ul>${items.map((it
 const chapterId = (number) => `chapter-${String(Number(number)).padStart(2, "0")}`;
 const chapterTitle = (chapter) => `Chapter ${chapter.number}${chapter.title ? `: ${chapter.title}` : ""}`;
 
-function coverage(selection) {
-  if (selection.total === 1 && selection.all) return `Covers chapter ${selection.chapters[0]}.`;
-  if (selection.all) return `Covers all ${selection.total} chapters.`;
+function chapterRanges(chapters) {
   const ranges = [];
-  for (const number of selection.chapters) {
+  for (const number of chapters) {
     if (ranges.length && ranges.at(-1)[1] + 1 === number) ranges.at(-1)[1] = number;
     else ranges.push([number, number]);
   }
-  return `Covers chapters ${ranges.map(([low, high]) => low === high ? low : `${low}–${high}`).join(", ")} of ${selection.total}.`;
+  return ranges.map(([low, high]) => low === high ? low : `${low}–${high}`).join(", ");
+}
+
+function coverage(selection, manuscript_error) {
+  if (selection.total === 0) return manuscript_error ? "No chapters could be read." : "This book has no chapters yet.";
+  if (selection.total === 1 && selection.all) return `Covers chapter ${selection.chapters[0]}.`;
+  if (selection.all) return `Covers all ${selection.total} chapters.`;
+  return `Covers ${selection.chapters.length === 1 ? "chapter" : "chapters"} ${chapterRanges(selection.chapters)} of ${selection.total}.`;
 }
 
 const SEVERITY_WORDS = { block: "blocking", warn: "warning" };
@@ -291,7 +316,7 @@ export function renderReport(data) {
   const chaptersPresent = has("findings") || has("proposals");
   const toc = [];
   if (has("summary")) toc.push('<a href="#summary">Summary</a>');
-  if (chaptersPresent) toc.push(`<a href="#chapters">Chapters</a>${listHtml(data.chapters.map((chapter) => `<a href="#${chapterId(chapter.number)}">${esc(chapterTitle(chapter))}</a><small>${esc(plural(chapter.open_findings, "open finding"))} · ${esc(plural(chapter.proposal?.edits?.length || 0, "proposed edit"))}</small>`), "No chapters yet.")}`);
+  if (chaptersPresent) toc.push(`<a href="#chapters">Chapters</a>${listHtml(data.chapters.map((chapter) => `<a href="#${chapterId(chapter.number)}">${esc(chapterTitle(chapter))}</a><small>${esc(plural(chapter.open_findings, "open finding"))} · ${esc(plural(chapter.proposal?.edits?.length || 0, "proposed edit"))}</small>`), data.manuscript_error ? "Chapters could not be read." : "No chapters yet.")}`);
   for (const [key, id, title] of [["canon", "world-bible", "World bible"], ["state", "story-so-far", "Story so far"], ["rules", "rules", "Rules in effect"]]) if (has(key)) toc.push(`<a href="#${id}">${title}</a>`);
   toc.push('<a href="#setup-check">Setup check</a>');
   const body = [];
@@ -299,16 +324,25 @@ export function renderReport(data) {
     const f = data.counts.findings, c = data.counts;
     const approved = data.chapters.filter((chapter) => chapter.approved).length;
     const tiles = [[approved, "chapters approved", `${plural(data.selection.chapters.length, "chapter")} covered`], [f.total, "open findings", `${plural(f.rule_blocking + f.rule_warnings, "style rule")} (${f.rule_blocking} blocking) · ${f.voice} voice · ${f.judgment} judgment`], [c.proposals.ready, "proposals waiting", `${plural(c.edits_waiting, "edit")} waiting`], [c.declines, "declined by the AI", "findings with no edit"], [c.dropped, "dropped edits", "see reasons under each chapter"], [c.changes_waiting, "chapters with changes waiting", "awaiting author approval"]];
-    body.push(`<section id="summary"><h2>Summary</h2><p>${esc(data.progress.approved.length)} of ${esc(plural(data.progress.total, "chapter"))} approved since import</p><progress max="${Math.max(1, Number(data.progress.total))}" value="${Number(data.progress.approved.length)}" aria-label="Chapters approved since import"></progress><div class="tiles">${tiles.map(([number, label, detail]) => `<div class="tile"><strong>${esc(number)}</strong>${label}<small>${esc(detail)}</small></div>`).join("")}</div><p>${f.notes ? `${esc(plural(f.notes, "lower-priority note"))} ${f.notes === 1 ? "is" : "are"} listed under each chapter.` : "No lower-priority notes."}</p>${notice("Findings", data.errors?.findings)}${notice("Proposals", data.errors?.proposals)}</section>`);
+    const progress = data.selection.total === 0
+      ? (data.manuscript_error ? "<p>Progress can't be shown because the manuscript could not be read.</p>" : "<p>No chapters to approve yet.</p>")
+      : `<p>${esc(data.progress.approved.length)} of ${esc(plural(data.progress.total, "chapter"))} approved since import</p><progress max="${Math.max(1, Number(data.progress.total))}" value="${Number(data.progress.approved.length)}" aria-label="Chapters approved since import"></progress>`;
+    body.push(`<section id="summary"><h2>Summary</h2>${progress}<div class="tiles">${tiles.map(([number, label, detail]) => `<div class="tile"><strong>${esc(number)}</strong>${label}<small>${esc(detail)}</small></div>`).join("")}</div><p>${f.notes ? `${esc(plural(f.notes, "lower-priority note"))} ${f.notes === 1 ? "is" : "are"} listed under each chapter.` : "No lower-priority notes."}</p>${notice("Findings", data.errors?.findings)}${notice("Proposals", data.errors?.proposals)}</section>`);
   }
-  if (chaptersPresent) body.push(`<section id="chapters"><h2>Chapters</h2>${data.chapters.length ? data.chapters.map((chapter) => `<details class="chapter" id="${chapterId(chapter.number)}" open><summary><h2>${esc(chapterTitle(chapter))}</h2> ${chapter.approved ? chip("approved", "good") : ""} ${chapter.changes_waiting ? chip("changes waiting", "warn") : ""} ${chapter.open_findings ? chip(plural(chapter.open_findings, "open finding"), "warn") : ""} ${chapter.stale_reviews.length ? chip("review out of date", "warn") : ""} ${chapter.proposal?.status ? chip(`proposal ${chapter.proposal.status.replaceAll("-", " ")}`) : ""}</summary>${has("findings") ? findingsHtml(chapter) : ""}${has("proposals") ? proposalHtml(chapter.proposal) : ""}</details>`).join("") : "<p>This book has no chapters yet. Import a manuscript to see findings and proposals.</p>"}</section>`);
+  if (chaptersPresent) body.push(`<section id="chapters"><h2>Chapters</h2>${data.chapters.length ? data.chapters.map((chapter) => {
+    try { return `<details class="chapter" id="${chapterId(chapter.number)}" open><summary><h2>${esc(chapterTitle(chapter))}</h2> ${chapter.approved ? chip("approved", "good") : ""} ${chapter.changes_waiting ? chip("changes waiting", "warn") : ""} ${chapter.open_findings ? chip(plural(chapter.open_findings, "open finding"), "warn") : ""} ${chapter.stale_reviews.length ? chip("review out of date", "warn") : ""} ${chapter.proposal?.status ? chip(`proposal ${chapter.proposal.status.replaceAll("-", " ")}`) : ""}</summary>${has("findings") ? findingsHtml(chapter) : ""}${has("proposals") ? proposalHtml(chapter.proposal) : ""}</details>`; }
+    catch (error) { return `<details class="chapter" id="${chapterId(chapter.number)}" open><summary><h2>${esc(chapterTitle(chapter))}</h2></summary><p class="notice">This chapter could not be shown: ${esc(error.message)}</p></details>`; }
+  }).join("") : data.manuscript_error ? "<p>Chapters can't be shown because the manuscript could not be read. Fix the scene file named at the top of this report, then make the report again.</p>" : "<p>This book has no chapters yet. Import a manuscript to see findings and proposals.</p>"}</section>`);
   if (has("canon")) {
     const bible = data.world_bible, canon = bible.canon;
     body.push(`<section id="world-bible"><h2>World bible</h2>${bible.error ? notice("World bible", bible.error) : bible.markdown ? worldBibleHtml(bible.markdown) : "<p>No world bible notes yet.</p>"}${canon ? `<h3>Canon entries</h3>${canon.error ? `<p class="notice">${esc(canon.error)}</p>` : canon.entries ? canon.entries.map((entry) => `<article class="card"><h4>${esc(entry.title)} ${entry.kind ? chip(entry.kind) : ""}</h4><dl>${entry.fields.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value)}</dd>`).join("")}</dl></article>`).join("") : `<pre>${esc(canon.json)}</pre>`}` : ""}<h3>Character registry</h3>${bible.characters.error ? notice("Characters", bible.characters.error) : listHtml(bible.characters.map((item) => `${esc(item.name)}${item.aliases.length ? ` (also: ${item.aliases.map(esc).join(", ")})` : ""}`), "No characters registered yet.")}</section>`);
   }
   if (has("state")) {
     const state = data.state;
-    body.push(`<section id="story-so-far"><h2>Story so far</h2>${state.error ? notice("Story so far", state.error) : `<p>Story-so-far state: ${state.stale ? `${esc(state.current)} current, ${esc(state.stale)} waiting for acceptance or refresh.` : `${esc(state.current)} of ${esc(state.total)} scenes current.`}</p><h3>Places</h3>${listHtml(state.places.map((group) => `<strong>${esc(group.value)}</strong>${listHtml(group.entries.map((entry) => `${entry.who ? `${esc(entry.who)} in` : "In"} scene ${esc(entry.scene_id)}: “${esc(entry.quote)}”`))}`), "No places recorded yet.")}<h3>Threads</h3>${listHtml(state.threads.map((group) => `${markdownToHtml(group.value)}<p>${group.entries.map((entry) => `${esc(entry.status)} in scene ${esc(entry.scene_id)}`).join(", ")}</p>`), "No threads recorded yet.")}`}</section>`);
+    const stateProgress = data.selection.total === 0
+      ? (data.manuscript_error ? "Story-so-far state can't be shown because the manuscript could not be read." : "No scenes to track yet.")
+      : `Story-so-far state: ${state.stale ? `${esc(state.current)} current, ${esc(state.stale)} waiting for acceptance or refresh.` : `${esc(state.current)} of ${esc(state.total)} scenes current.`}`;
+    body.push(`<section id="story-so-far"><h2>Story so far</h2>${state.error ? notice("Story so far", state.error) : `<p>${stateProgress}</p><h3>Places</h3>${listHtml(state.places.map((group) => `<strong>${esc(group.value)}</strong>${listHtml(group.entries.map((entry) => `${entry.who ? `${esc(entry.who)} in` : "In"} scene ${esc(entry.scene_id)}: “${esc(entry.quote)}”`))}`), "No places recorded yet.")}<h3>Threads</h3>${listHtml(state.threads.map((group) => `${markdownToHtml(group.value)}<p>${group.entries.map((entry) => `${esc(entry.status)} in scene ${esc(entry.scene_id)}`).join(", ")}</p>`), "No threads recorded yet.")}`}</section>`);
   }
   if (has("rules")) body.push(`<section id="rules"><h2>Rules in effect</h2>${data.rules.error ? notice("Rules", data.rules.error) : data.rules.map((rule) => `<article class="card"><h3>${esc(rule.id)} ${chip(rule.severity === "block" ? "blocking" : "warning", rule.severity === "block" ? "bad" : "warn")} ${chip(rule.type)}</h3><p>${esc(rule.message)}</p><p class="meta">${esc(rule.scope)}</p></article>`).join("") || "<p>No style rules configured.</p>"}${data.reviewers.error ? notice("Reviewers", data.reviewers.error) : `<p>Reviewers: ${data.reviewers.map((reviewer) => `${esc(reviewer.title)} (${reviewer.builtin ? "built in" : "this book"})`).join("; ")}.</p>`}</section>`);
   const doctor = data.doctor, first = doctor.blocking?.[0];
@@ -318,6 +352,7 @@ export function renderReport(data) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="generator" content="${esc(GENERATOR)}">
+${REPORT_MARKER}
 <meta name="color-scheme" content="light dark">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="${reportCsp()}">
@@ -325,7 +360,7 @@ export function renderReport(data) {
 <style>${REPORT_CSS}</style>
 </head><body>
 <p class="privacy" role="note"><strong>${PRIVACY_LINE}</strong></p>
-<div class="wrap"><header id="top"><h1>${esc(data.project.title)}</h1>${data.project.author ? `<p>by ${esc(data.project.author)}</p>` : ""}<p class="stamp">${esc(stamp)}</p><p class="coverage">${esc(coverage(data.selection))}</p>${data.manuscript_error ? `<p class="notice">The manuscript could not be read: ${esc(data.manuscript_error)}</p>` : ""}${notice("Changes waiting", data.errors?.pending)}${!has("canon") ? notice("Characters", data.errors?.characters) : ""}</header>
+<div class="wrap"><header id="top"><h1>${esc(data.project.title)}</h1>${data.project.author ? `<p>by ${esc(data.project.author)}</p>` : ""}<p class="stamp">${esc(stamp)}</p><p class="coverage">${esc(coverage(data.selection, data.manuscript_error))}</p>${data.manuscript_error ? `<p class="notice">The manuscript could not be read: ${esc(data.manuscript_error)}</p>` : ""}${notice("Changes waiting", data.errors?.pending)}${!has("canon") ? notice("Characters", data.errors?.characters) : ""}</header>
 <div id="report-tools" class="tools" hidden><button type="button" data-do="expand">Expand all</button><button type="button" data-do="collapse">Collapse all</button><button type="button" data-do="print">Print or save as PDF</button></div>
 <nav class="toc" aria-label="Contents">${listHtml(toc)}</nav><main>${body.join("\n")}</main>${footer}</div>
 <script>${REPORT_SCRIPT}</script>
@@ -337,17 +372,28 @@ export function buildReport(root, options = {}) {
   return { html: renderReport(data), data };
 }
 
-function inside(folder, destination) {
-  const normalize = (path) => process.platform === "win32" ? path.toLowerCase() : path;
-  const path = relative(normalize(folder), normalize(destination));
-  return path !== ".." && !path.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(path);
+function pathStat(path) {
+  try { return lstatSync(path); } catch { return null; }
 }
 
-// Resolve existing ancestors too: a folder shortcut must not bypass book protection.
-function physicalPath(path) {
+function existingAncestor(path) {
   let ancestor = path;
-  while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
-  return resolve(realpathSync(ancestor), relative(ancestor, path));
+  while (!pathStat(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
+  return ancestor;
+}
+
+function isBookFolder(folder) {
+  const project = join(folder, "project.json");
+  if (!existsSync(project)) return false;
+  try { return JSON.parse(readFileSync(project, "utf8").replace(/^\uFEFF/u, ""))?.kind === "book"; }
+  catch { return true; }
+}
+
+function enclosingBook(path) {
+  for (let folder = dirname(path); ; folder = dirname(folder)) {
+    if (isBookFolder(folder)) return folder;
+    if (dirname(folder) === folder) return null;
+  }
 }
 
 function reportFileAccess(operation) {
@@ -357,17 +403,20 @@ function reportFileAccess(operation) {
 
 export function writeReport(root, outPath, options = {}) {
   if (!outPath) throw new Error(USAGE);
+  if (process.platform === "win32" && (/^[\\/]{2}[?.][\\/]/u.test(outPath) || resolve(outPath).replace(/^[a-z]:/iu, "").includes(":"))) throw new Error("Use an ordinary file path for the report, for example --out ../report.html.");
   const destination = resolve(outPath);
   if (!/^\.html?$/iu.test(extname(destination))) throw new Error("Save the report as an .html file, for example --out report.html.");
   root = resolve(root);
-  const project = readProject(root);
-  const forbidden = (book, file, source, state) => {
-    const protectedLocation = protectedPath(book, file);
-    return (protectedLocation !== null && protectedLocation !== "outside the book folder") || inside(source, file) || inside(state, file);
-  };
-  if (forbidden(root, destination, resolve(root, project.source_root), resolve(root, project.state_root)) || reportFileAccess(() => forbidden(physicalPath(root), physicalPath(destination), physicalPath(resolve(root, project.source_root)), physicalPath(resolve(root, project.state_root))))) {
-    throw new Error(`Weaver won't save the report inside the book's protected or manuscript folders (${relative(root, destination).replaceAll("\\", "/")}). Save it somewhere else, for example next to the book folder.`);
-  }
+  readProject(root);
+  const shortcut = "That report path is a shortcut (a link to somewhere else). Give an ordinary file name, for example --out ../report.html.";
+  if (pathStat(destination)?.isSymbolicLink()) throw new Error(shortcut);
+  const ancestor = existingAncestor(destination);
+  if (pathStat(ancestor)?.isSymbolicLink() && !existsSync(ancestor)) throw new Error(shortcut);
+  let physical;
+  try { physical = resolve(realpathSync.native(ancestor), relative(ancestor, destination)); }
+  catch { throw new Error("Weaver couldn't check where that path leads, so it won't save the report there. Choose another folder."); }
+  const book = enclosingBook(destination) || enclosingBook(physical);
+  if (book) throw new Error(`Weaver saves reports outside book folders, so the AI working in a book can't change them and they stay out of the book's history. Save this one outside "${basename(book)}", for example --out "${join(dirname(book), basename(destination))}".`);
   if (existsSync(destination)) {
     if (reportFileAccess(() => statSync(destination).isDirectory())) throw new Error("That path is a folder. Give a file name, for example --out report.html.");
     const prefix = reportFileAccess(() => {
@@ -375,7 +424,7 @@ export function writeReport(root, outPath, options = {}) {
       try { return bytes.subarray(0, readSync(file, bytes, 0, bytes.length, 0)).toString("utf8"); }
       finally { closeSync(file); }
     });
-    if (!prefix.includes('<meta name="generator" content="PickBits Weaver')) throw new Error(`Refusing to replace ${basename(destination)}: it is not a Weaver report. Choose a new file name.`);
+    if (!prefix.includes(REPORT_MARKER)) throw new Error(`Refusing to replace ${basename(destination)}: it is not a Weaver report. Choose a new file name.`);
   }
   const { html, data } = buildReport(root, options);
   reportFileAccess(() => { mkdirSync(dirname(destination), { recursive: true }); writeFileSync(destination, html, "utf8"); });

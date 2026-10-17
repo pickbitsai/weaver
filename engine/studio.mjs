@@ -47,9 +47,17 @@ export function approvalProgress(root, scenes) {
   let baseline = -1;
   subjects.forEach((subject, index) => { if (/^(?:Import original manuscript|Initialize book)/u.test(subject)) baseline = index; });
   const approved = new Set();
+  const approvals = new Map();
   for (const subject of subjects.slice(baseline + 1)) {
-    const match = /^(?:Approve chapter |Repairs accepted, chapter )(\d+)(?::| |$)/u.exec(subject);
-    if (match) approved.add(Number(match[1]));
+    const reverted = /^Revert "(.+)"$/u.exec(subject);
+    const match = /^(?:Approve chapter |Repairs accepted, chapter )(\d+)(?::| |$)/u.exec(reverted ? reverted[1] : subject);
+    if (match) {
+      const chapter = Number(match[1]);
+      const count = (approvals.get(chapter) || 0) + (reverted ? -1 : 1);
+      approvals.set(chapter, count);
+      if (count > 0) approved.add(chapter);
+      else approved.delete(chapter);
+    }
   }
   return { approved, total: new Set(scenes.map((scene) => scene.chapter)).size };
 }
@@ -233,12 +241,21 @@ function pageBody(path, root, project, job) {
   return null;
 }
 
+// The setup-check summary shown in the studio footer and in the shareable report.
+export function doctorStatus(doctor) {
+  const guardChecks = doctor.checks.filter((check) => GUARD_CHECK_IDS.includes(check.id));
+  return {
+    first: doctor.blocking[0],
+    guardOn: !guardChecks.some((check) => check.status === "blocking"),
+    guardProblem: (guardChecks.find((check) => check.status === "blocking") || guardChecks.find((check) => check.status === "warning"))?.findings[0],
+    integrity: doctor.checks.find((item) => item.id === "install-integrity")?.status === "pass",
+    labels: Object.values(doctor.guardrails).map((item) => item.label)
+  };
+}
+
 function layout(body, root, project) {
   const doctor = runDoctor({ bookRoot: root });
-  const first = doctor.blocking[0];
-  const guardChecks = doctor.checks.filter((check) => GUARD_CHECK_IDS.includes(check.id));
-  const guardOn = !guardChecks.some((check) => check.status === "blocking");
-  const guardProblem = (guardChecks.find((check) => check.status === "blocking") || guardChecks.find((check) => check.status === "warning"))?.findings[0];
+  const { first, guardOn, guardProblem } = doctorStatus(doctor);
   const integrity = doctor.checks.find((item) => item.id === "install-integrity")?.status === "pass";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(project.title)} · Weaver Studio</title><link rel="stylesheet" href="/studio.css"><script src="/studio.js" defer></script></head><body><a class="skip" href="#main">Skip to content</a><header><strong>Weaver Studio</strong><nav aria-label="Main navigation">${NAV.map(([href, label]) => `<a href="${href}">${label}</a>`).join("")}</nav></header><main id="main">${body}</main><p id="action-message" role="status" aria-live="polite"></p><footer><h2>Doctor</h2><p>Supported setup: ${doctor.ok ? "yes" : "no"}${first ? ` · ${esc(first.problem)}. ${esc(first.why)} ${esc(first.fix)}` : ""}</p><p>Guardrails: ${guardOn ? "on" : "off"}${guardProblem ? ` &middot; ${esc(guardProblem.problem)}` : ""}</p>${Object.values(doctor.guardrails).map((item) => `<p>${esc(item.label)}</p>`).join("")}<p>Weaver install unchanged: ${integrity ? "yes" : "no"}</p></footer></body></html>`;
 }

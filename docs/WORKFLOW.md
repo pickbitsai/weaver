@@ -17,6 +17,11 @@ decisions and offers a confirmed undo of the last approval. The studio calls
 the same engine operations as the matching commands below, including their
 doctor refusal.
 
+**Download report** saves the same picture of the book as one offline HTML file
+to send to someone else; `weaver report --out <file.html>` does the same from a
+terminal and saves it outside the book folder. It contains manuscript excerpts,
+so share it only with people you trust.
+
 ## 0. Check the setup
 
 Before working on a book, run:
