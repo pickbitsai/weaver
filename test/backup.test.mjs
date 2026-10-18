@@ -27,6 +27,8 @@ import { BACKUP_RECORD, BACKUP_REMOTE, BACKUP_TIMEOUT_MS, SETUP_TIMEOUT_MS, back
 import { authorEnv } from "./helpers/env.mjs";
 import { backupNeeded, dropGitOverrides, gitSafeEnv } from "../engine/backup.mjs";
 import { makeBook } from "./helpers/book.mjs";
+import os, { userInfo } from "node:os";
+import { backupGitEnv, applyBackupGitEnv } from "../engine/backup.mjs";
 
 const CLI = resolve("scripts/weaver.mjs");
 const SCENE = "manuscript/chapter-01/scene-01/scene.md";
@@ -1199,5 +1201,315 @@ test("studio spawns no backup for an up-to-date book and exactly one for a new c
         await backedUp(root, bare, "studio");
       } else assert.equal(readBackupRecord(root).attempts.length, 1);
     } finally { spy.mock.restore(); syncBuiltinESMExports(); if (server) await close(server); }
+  }
+});
+
+const accountHome = userInfo().homedir;
+const sameAccountPath = (a, b) => normalPath(resolve(a)) === normalPath(resolve(b));
+const redirectSettings = (evil) => `[remote "${BACKUP_REMOTE}"]\n\treceivepack = "git receive-pack '${evil.replaceAll("\\", "/")}' #"\n`;
+function writeCallerSettings(path, content) {
+  mkdirSync(resolve(path, ".."), { recursive: true });
+  writeFileSync(path, content);
+}
+
+test("backup Git environment pins the account home folder and drops caller settings and traces", (t) => {
+  const input = { PATH: "synthetic-bin", HOME: resolve("synthetic-home"), USERPROFILE: resolve("synthetic-profile"),
+    HOMEDRIVE: "Q:", HOMEPATH: "\\synthetic", XDG_CONFIG_HOME: resolve("synthetic-config"), GCM_TRACE: "x",
+    gcm_trace_secrets: "1", GIT_CURL_VERBOSE: "1", GIT_CONFIG_COUNT: "1", GIT_AUTHOR_NAME: "Rill",
+    GCM_INTERACTIVE: "never", SSH_AUTH_SOCK: "synthetic-agent", GIT_ASKPASS: "synthetic-askpass" };
+  const before = { ...input }, safe = backupGitEnv(input);
+  assert.ok(sameAccountPath(safe.HOME, accountHome));
+  for (const key of ["XDG_CONFIG_HOME", "GCM_TRACE", "gcm_trace_secrets", "GIT_CURL_VERBOSE", "GIT_CONFIG_COUNT"]) assert.equal(Object.hasOwn(safe, key), false, key);
+  for (const key of ["PATH", "GIT_AUTHOR_NAME", "GCM_INTERACTIVE", "SSH_AUTH_SOCK", "GIT_ASKPASS"]) assert.equal(safe[key], input[key], key);
+  if (process.platform === "win32") {
+    assert.ok(sameAccountPath(safe.USERPROFILE, accountHome));
+    assert.equal(Object.hasOwn(safe, "HOMEDRIVE"), false);
+    assert.equal(Object.hasOwn(safe, "HOMEPATH"), false);
+  } else for (const key of ["USERPROFILE", "HOMEDRIVE", "HOMEPATH"]) assert.equal(safe[key], input[key]);
+  assert.deepEqual(input, before);
+  const unchanged = { PATH: input.PATH, HOME: accountHome, XDG_CONFIG_HOME: join(accountHome, ".config"),
+    ...(process.platform === "win32" ? { USERPROFILE: accountHome } : {}) };
+  assert.equal(backupGitEnv(unchanged), unchanged);
+  if (process.platform === "win32" && /^[a-z]:/iu.test(accountHome)) {
+    for (const env of [{ PATH: input.PATH, USERPROFILE: accountHome },
+      { PATH: input.PATH, USERPROFILE: accountHome, HOMEDRIVE: accountHome.slice(0, 2), HOMEPATH: accountHome.slice(2) }]) assert.equal(backupGitEnv(env), env);
+  } else if (process.platform !== "win32") {
+    const env = { PATH: input.PATH }, result = backupGitEnv(env);
+    assert.notEqual(result, env);
+    assert.equal(result.HOME, accountHome);
+  }
+  const mixed = backupGitEnv({ PATH: input.PATH, home: resolve("synthetic-home") });
+  assert.equal(mixed.HOME, accountHome);
+  assert.equal(Object.hasOwn(mixed, "home"), false);
+  const copy = { ...input }, names = applyBackupGitEnv(copy);
+  assert.deepEqual(copy, safe);
+  assert.ok(names.includes("HOME"));
+  assert.ok(names.includes("XDG_CONFIG_HOME"));
+  assert.ok(names.every((name) => name === name.toUpperCase()));
+  assert.deepEqual(applyBackupGitEnv(copy), []);
+  const spy = t.mock.method(os, "userInfo", () => { throw new Error("synthetic"); });
+  syncBuiltinESMExports();
+  try {
+    const unknown = backupGitEnv(input);
+    for (const key of ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "XDG_CONFIG_HOME"]) assert.equal(Object.hasOwn(unknown, key), false, key);
+    assert.equal(unknown.PATH, input.PATH);
+  } finally { spy.mock.restore(); syncBuiltinESMExports(); }
+});
+
+for (const source of ["XDG_CONFIG_HOME at a Git settings file inside the book", "HOME at another home folder"]) test(`AI backup now with ${source} still backs up to the author's address`, (t) => {
+  const { root, bare, base } = fixture(t);
+  setup(root, bare);
+  const evil = bareRepository(join(base, "elsewhere.git"));
+  const aiEnv = { ...authorEnv(), CLAUDECODE: "1" };
+  if (source.startsWith("XDG")) {
+    aiEnv.XDG_CONFIG_HOME = join(root, "outline", ".cfg");
+    writeCallerSettings(join(aiEnv.XDG_CONFIG_HOME, "git", "config"), redirectSettings(evil));
+  } else {
+    aiEnv.HOME = aiEnv.USERPROFILE = join(base, "ai-home");
+    for (const key of Object.keys(aiEnv)) if (key.toUpperCase() === "XDG_CONFIG_HOME") delete aiEnv[key];
+    writeCallerSettings(join(aiEnv.HOME, ".gitconfig"), redirectSettings(evil));
+  }
+  git(root, "commit", "--allow-empty", "-qm", "Rill saves a note");
+  const commit = head(root), name = branch(root);
+  const proof = gitResult(root, ["push", BACKUP_REMOTE, `${commit}:refs/heads/fixture-check`], aiEnv);
+  assert.equal(proof.status, 0, proof.stderr);
+  assert.equal(bareRef(evil, "fixture-check"), commit);
+  assert.equal(bareRef(bare, "fixture-check"), null);
+  git(evil, "update-ref", "-d", "refs/heads/fixture-check");
+  git(root, "update-ref", "-d", `refs/remotes/${BACKUP_REMOTE}/fixture-check`);
+  const result = cli(root, ["backup", "now"], aiEnv);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /Backed up/u);
+  assert.equal(bareRef(bare, name), commit);
+  assert.equal(git(evil, "for-each-ref"), "");
+  assert.equal(backupStatus(root).state, "up-to-date");
+  const status = cli(root, ["backup", "status"]);
+  assert.equal(status.status, 0, status.stderr);
+  assert.match(status.stdout, /^Backup: up to date/u);
+});
+
+test("a studio started with XDG_CONFIG_HOME and HOME backs up the author's approval to the right place and ignores the caller's Git hooks", async (t) => {
+  const { root, bare, base } = fixture(t);
+  setup(root, bare);
+  const evil = bareRepository(join(base, "elsewhere.git"));
+  const hooks = join(base, "ai-hooks"), cfg = join(root, "outline", ".cfg"), home = join(base, "ai-home");
+  mkdirSync(hooks);
+  writeFileSync(join(hooks, "pre-commit"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const settings = `${redirectSettings(evil)}[core]\n\thooksPath = "${hooks.replaceAll("\\", "/")}"\n`;
+  writeCallerSettings(join(cfg, "git", "config"), settings);
+  writeCallerSettings(join(home, ".gitconfig"), settings);
+  const previous = head(root);
+  const proof = gitResult(root, ["commit", "--allow-empty", "-qm", "fixture check"], { ...process.env, XDG_CONFIG_HOME: cfg });
+  assert.notEqual(proof.status, 0);
+  assert.equal(head(root), previous);
+  const restore = overrideEnv(t, { XDG_CONFIG_HOME: cfg, HOME: home, USERPROFILE: home });
+  let server;
+  try {
+    server = await startStudio({ root, port: 0 });
+    assert.equal(process.env.XDG_CONFIG_HOME, undefined);
+    assert.ok(sameAccountPath(process.env.HOME, accountHome));
+    if (process.platform === "win32") assert.ok(sameAccountPath(process.env.USERPROFILE, accountHome));
+    changeScene(root);
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const response = await fetch(`${baseUrl}/api/approve`, { method: "POST",
+      headers: { "Content-Type": "application/json", "X-Weaver-Studio": "1", Origin: baseUrl }, body: JSON.stringify({ chapter: 1 }) });
+    assert.equal(response.status, 200, await response.text());
+    await backedUp(root, bare);
+    assert.equal(git(evil, "for-each-ref"), "");
+    const page = await fetch(`${baseUrl}/`);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /<footer>[\s\S]*Backup: up to date/u);
+  } finally { if (server) await close(server); restore(); }
+});
+
+test("every backup Git child and the worker get the account home and no caller settings or traces", async (t) => {
+  const { root, bare, base } = fixture(t);
+  setup(root, bare);
+  git(root, "commit", "--allow-empty", "-qm", "Rill saves a note");
+  const restore = overrideEnv(t, { XDG_CONFIG_HOME: join(base, "ai-config"), HOME: join(base, "ai-home"),
+    USERPROFILE: join(base, "ai-home"), GCM_TRACE: join(base, "gcm.log"), GCM_TRACE_SECRETS: "1", GIT_CURL_VERBOSE: "1" });
+  const checkEnv = (env) => {
+    assert.equal(Object.keys(env).some((key) => /^(?:XDG_CONFIG_HOME|GCM_TRACE|GCM_TRACE_SECRETS|GIT_CURL_VERBOSE)$/iu.test(key)), false);
+    assert.ok(sameAccountPath(env.HOME, accountHome));
+    if (process.platform === "win32") assert.ok(sameAccountPath(env.USERPROFILE, accountHome));
+  };
+  const originalSync = childProcess.spawnSync, originalSpawn = childProcess.spawn;
+  const sync = t.mock.method(childProcess, "spawnSync", (...args) => originalSync(...args));
+  syncBuiltinESMExports();
+  let spawned, started = false;
+  try {
+    assert.equal(backupNow(root).ok, true);
+    const calls = sync.mock.calls.filter((call) => call.arguments[0] === "git");
+    assert.ok(calls.some((call) => call.arguments[1].includes("ls-remote")));
+    assert.ok(calls.some((call) => call.arguments[1].includes("push")));
+    for (const call of calls) checkEnv(call.arguments[2].env);
+    sync.mock.restore();
+    spawned = t.mock.method(childProcess, "spawn", (...args) => originalSpawn(...args));
+    syncBuiltinESMExports();
+    started = backupAfterCommit(root).started;
+    assert.equal(started, true);
+    assert.equal(spawned.mock.calls.length, 1);
+    const [command, args, options] = spawned.mock.calls[0].arguments;
+    assert.equal(command, process.execPath);
+    assert.ok(args[0].endsWith("backup-worker.mjs"));
+    checkEnv(options.env);
+    assert.equal(options.windowsHide, true);
+    assert.notEqual(options.shell, true);
+  } finally {
+    sync.mock.restore(); spawned?.mock.restore(); syncBuiltinESMExports(); restore();
+    if (started) { await waitFor(() => readBackupRecord(root).attempts.length === 3); await waitIdle(root); }
+  }
+});
+
+for (const key of ["receivepack", "uploadpack", "vcs"]) test(`a ${key} setting on the backup remote is refused before anything is sent`, (t) => {
+  const { root, bare, base } = fixture(t);
+  setup(root, bare);
+  const evil = bareRepository(join(base, "elsewhere.git"));
+  const previous = head(root), name = branch(root), success = readBackupRecord(root).last_success;
+  git(root, "commit", "--allow-empty", "-qm", "Rill saves a note");
+  const value = key === "vcs" ? "synthetic" : `git ${key === "receivepack" ? "receive-pack" : "upload-pack"} '${evil.replaceAll("\\", "/")}' #`;
+  git(root, "config", `remote.${BACKUP_REMOTE}.${key}`, value);
+  const result = backupNow(root);
+  assert.equal(result.ok, false);
+  assert.match(result.attempt.error, /different address than the one you set up/u);
+  assert.equal(git(evil, "for-each-ref"), "");
+  assert.equal(bareRef(bare, name), previous);
+  assert.equal(git(root, "rev-parse", `refs/remotes/${BACKUP_REMOTE}/${name}`), previous);
+  assert.deepEqual(readBackupRecord(root).last_success, success);
+  assert.equal(backupStatus(root).state, "address-changed");
+  assert.equal(check(root).status, "warning");
+  git(root, "config", "--unset", `remote.${BACKUP_REMOTE}.${key}`);
+  const confirmed = cli(root, ["backup", "setup", "--remote", bare]);
+  assert.equal(confirmed.status, 0, confirmed.stdout + confirmed.stderr);
+  assert.equal(backupStatus(root).state, "up-to-date");
+  assert.equal(bareRef(bare, name), head(root));
+});
+
+test("a backup service that doesn't keep the push is a plain failure, and the next success clears it", (t) => {
+  const { root, bare } = fixture(t);
+  setup(root, bare);
+  const previous = head(root), name = branch(root), success = readBackupRecord(root).last_success;
+  git(bare, "config", "core.hooksPath", join(bare, "hooks"));
+  const postReceive = join(bare, "hooks", "post-receive");
+  writeFileSync(postReceive, '#!/bin/sh\nwhile read old new ref; do\n  if [ "$old" = "0000000000000000000000000000000000000000" ]; then git update-ref -d "$ref"; else git update-ref "$ref" "$old"; fi\ndone\n', { mode: 0o755 });
+  git(root, "commit", "--allow-empty", "-qm", "Rill saves a note");
+  const commit = head(root), result = backupNow(root);
+  assert.equal(result.ok, false);
+  assert.match(result.attempt.error, /didn't have the latest decisions/u);
+  assert.equal(result.attempt.commit, commit);
+  assert.equal(bareRef(bare, name), previous);
+  assert.equal(git(root, "rev-parse", `refs/remotes/${BACKUP_REMOTE}/${name}`), previous);
+  assert.deepEqual(readBackupRecord(root).last_success, success);
+  const status = backupStatus(root);
+  assert.equal(status.state, "failed");
+  assert.match(status.problems[0].problem, /Your last backup failed/u);
+  const retried = cli(root, ["backup", "now"]);
+  assert.equal(retried.status, 1);
+  assert.match(retried.stdout, /Backup failed:[\s\S]*didn't have the latest decisions/u);
+  rmSync(postReceive);
+  assert.equal(backupNow(root).ok, true);
+  assert.equal(backupStatus(root).state, "up-to-date");
+  assert.equal(bareRef(bare, name), commit);
+});
+
+test("a failed confirmation after a successful push is recorded plainly and leaves the tracking ref where it was", (t) => {
+  const { root, bare } = fixture(t);
+  setup(root, bare);
+  const previous = head(root), name = branch(root), success = readBackupRecord(root).last_success;
+  git(root, "commit", "--allow-empty", "-qm", "Rill saves a note");
+  const commit = head(root), original = childProcess.spawnSync;
+  const spy = t.mock.method(childProcess, "spawnSync", (command, args, options) => command === "git" && args.includes("ls-remote")
+    ? { status: 128, stdout: "", stderr: "fatal: unable to access 'https://example.invalid/salt-map.git/': Could not resolve host: example.invalid\n", pid: 0, output: [], signal: null }
+    : original(command, args, options));
+  syncBuiltinESMExports();
+  try {
+    const result = backupNow(root);
+    assert.equal(result.ok, false);
+    assert.equal(result.attempt.error, "Weaver couldn't reach your backup service.");
+    assert.equal(bareRef(bare, name), commit);
+    assert.equal(git(root, "rev-parse", `refs/remotes/${BACKUP_REMOTE}/${name}`), previous);
+    assert.deepEqual(readBackupRecord(root).last_success, success);
+  } finally { spy.mock.restore(); syncBuiltinESMExports(); }
+  assert.equal(backupNow(root).ok, true);
+});
+
+test("UNC loopback spellings of a folder inside the book are refused before any write", (t) => {
+  if (process.platform !== "win32") { t.skip("Windows network-share paths only"); return; }
+  const { root, base } = fixture(t);
+  const inside = bareRepository(join(root, "backup.git")), drive = inside[0];
+  const spellings = [`\\\\localhost\\${drive}$${inside.slice(2)}`, `\\\\127.0.0.1\\${drive}$${inside.slice(2)}`, `//localhost/${drive}$${inside.slice(2).replaceAll("\\", "/")}`];
+  if (!existsSync(spellings[0])) { t.skip("This computer's administrative shares are unavailable"); return; }
+  for (const spelling of spellings) refusedInside(root, spelling);
+  const noProbes = () => {
+    for (const folder of [join(root, ".weaver"), join(root, ".git")]) if (existsSync(folder)) assert.equal(fs.readdirSync(folder).some((name) => name.startsWith("backup.probe-")), false, folder);
+  };
+  noProbes();
+  setup(root, bareRepository(join(base, "outside.git")));
+  noProbes();
+});
+
+test("shell guard denies Git and Git Credential Manager trace settings", (t) => {
+  const { root } = fixture(t);
+  for (const [tool_name, command] of [
+    ["Bash", "GCM_TRACE=/c/tmp/gcm.log GCM_TRACE_SECRETS=1 npx weaver backup now"],
+    ["Bash", "GCM_TRACE=/c/tmp/gcm.log GCM_TRACE_SECRETS=1 git ls-remote https://example.invalid/owner/book.git"],
+    ["PowerShell", "$env:GCM_TRACE_SECRETS='1'; git fetch"],
+    ["Bash", "GIT_TRACE_REDACT=0 GIT_TRACE_CURL=1 git ls-remote https://example.invalid/x.git"],
+    ["Bash", "env GIT_CURL_VERBOSE=1 git ls-remote https://example.invalid/x.git"]
+  ]) {
+    const payload = { cwd: root, tool_name, tool_input: { command } };
+    const denied = runHook("shell", payload)?.hookSpecificOutput;
+    assert.equal(denied?.permissionDecision, "deny", command);
+    assert.match(denied.permissionDecisionReason, /sign-in details/u);
+    assert.equal(runHook("shell", payload, { decideShell: () => null }), null);
+  }
+  for (const command of ["npx weaver backup now", "npx weaver backup status --json", "git status", "git log --oneline"]) assert.equal(runHook("shell", { cwd: root, tool_name: "Bash", tool_input: { command } }), null, command);
+});
+
+test("shell guard sees author commands split by quotes or escape characters", (t) => {
+  const { root } = fixture(t);
+  const shell = (command, tool_name = "Bash") => runHook("shell", { cwd: root, tool_name, tool_input: { command } });
+  for (const command of ["env -u CLAUDECODE npx weaver backup set''up --rem''ote https://example.invalid/elsewhere.git",
+    'npx weaver backup now --rem""ote https://example.invalid/x.git', 'npx weaver backup "set"up']) {
+    const denied = shell(command)?.hookSpecificOutput;
+    assert.equal(denied?.permissionDecision, "deny", command);
+    assert.match(denied.permissionDecisionReason, /backup setup/u);
+  }
+  for (const [tool_name, command] of [["Bash", "npx weaver ap''prove --chapter 1"], ["Bash", 'npx weaver gu""ard se\'\'al'],
+    ["PowerShell", "npx weaver ap`prove"], ["Bash", "cmd /c npx weaver ap^prove"], ["Bash", "npx weaver ap\\prove"]]) {
+    const denied = shell(command, tool_name)?.hookSpecificOutput;
+    assert.equal(denied?.permissionDecision, "deny", command);
+    assert.match(denied.permissionDecisionReason, /author's decision/u);
+  }
+  for (const command of ["npx weaver backup status --root ./setup-notes", "weaver backup status\necho setup",
+    "weaver guard --root ./seal-notes", "npx weaver review"]) assert.equal(shell(command), null, command);
+  // Keep this synthetic absolute path within its book; the existing path guard refuses outside paths.
+  assert.equal(runHook("shell", { cwd: "C:\\Books\\salt-map", tool_name: "Bash",
+    tool_input: { command: "npx weaver check --root C:\\Books\\salt-map" } }), null);
+});
+
+test("backup Git environment checks every spelling when copied variables conflict", () => {
+  for (const input of [
+    { HOME: resolve("synthetic-home"), home: accountHome },
+    { Home: resolve("synthetic-home"), home: accountHome },
+    { HOME: accountHome, home: resolve("synthetic-home") },
+    { HOME: "", home: accountHome }
+  ]) {
+    const before = { ...input }, safe = backupGitEnv(input);
+    assert.equal(safe.HOME, accountHome);
+    assert.deepEqual(Object.keys(safe).filter((key) => key.toUpperCase() === "HOME"), ["HOME"]);
+    assert.deepEqual(input, before);
+  }
+  const input = { HOME: accountHome, XDG_CONFIG_HOME: resolve("synthetic-config"), xdg_config_home: join(accountHome, ".config") };
+  assert.equal(Object.keys(backupGitEnv(input)).some((key) => key.toUpperCase() === "XDG_CONFIG_HOME"), false);
+  const names = applyBackupGitEnv(input);
+  assert.deepEqual(names, ["XDG_CONFIG_HOME"]);
+  assert.deepEqual(input, { HOME: accountHome });
+  const safe = { HOME: accountHome, home: accountHome, XDG_CONFIG_HOME: join(accountHome, ".config"), xdg_config_home: join(accountHome, ".config") };
+  assert.equal(backupGitEnv(safe), safe);
+  if (process.platform === "win32") {
+    const result = backupGitEnv({ HOME: accountHome, USERPROFILE: resolve("synthetic-profile"), userprofile: accountHome,
+      HOMEDRIVE: "Q:", homedrive: accountHome.slice(0, 2), HOMEPATH: "\\synthetic", homepath: accountHome.slice(2) });
+    assert.deepEqual(result, { HOME: accountHome, USERPROFILE: accountHome });
   }
 });

@@ -2,6 +2,8 @@
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
+import { userInfo } from "node:os";
+import { randomBytes } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GENERATOR, SCHEMA_BASE } from "./identity.mjs";
@@ -37,9 +39,76 @@ export function gitSafeEnv(env = process.env) {
   return safe;
 }
 
+// Git also finds settings through the home folder (HOME; on Windows also USERPROFILE, HOMEDRIVE and
+// HOMEPATH) and XDG_CONFIG_HOME. A caller, for example an AI that starts the studio or runs
+// `backup now`, could point them at Git settings of its own that send the backup somewhere else, so
+// backups take the home folder from this computer's user account instead. Trace settings can write
+// Git or Git Credential Manager sign-in details to a file, so backups leave them out too.
+const GIT_TRACE_ENV = /^(?:GCM_TRACE[A-Z0-9_]*|GIT_CURL_VERBOSE)$/iu;
+
+function accountHome() {
+  try {
+    const home = userInfo().homedir;
+    return typeof home === "string" && home.length ? home : null;
+  } catch { return null; }
+}
+
+function samePath(a, b) {
+  const first = resolve(a), second = resolve(b);
+  return process.platform === "win32" ? first.toLowerCase() === second.toLowerCase() : first === second;
+}
+
+function backupGitEnvPlan(env) {
+  // A copied environment can hold HOME and home together. Check every spelling before keeping it.
+  const values = new Map();
+  for (const [key, value] of Object.entries(env)) {
+    const name = key.toUpperCase();
+    if (!values.has(name)) values.set(name, []);
+    values.get(name).push(value);
+  }
+  const plan = new Map();
+  for (const key of values.keys()) if (GIT_OVERRIDE_ENV.test(key) || GIT_TRACE_ENV.test(key)) plan.set(key, null);
+  const home = accountHome();
+  if (home === null) {
+    for (const key of ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "XDG_CONFIG_HOME"]) if (values.has(key)) plan.set(key, null);
+    return plan;
+  }
+  const pathsMatch = (name, path) => values.get(name)?.every((value) => samePath(value, path));
+  const homeMatches = values.get("HOME")?.every((value) => value && samePath(value, home));
+  if (values.has("XDG_CONFIG_HOME") && !pathsMatch("XDG_CONFIG_HOME", join(home, ".config"))) plan.set("XDG_CONFIG_HOME", null);
+  if (process.platform === "win32") {
+    if (values.has("USERPROFILE") && !pathsMatch("USERPROFILE", home)) plan.set("USERPROFILE", home);
+    if (values.has("HOMEDRIVE") && values.has("HOMEPATH") && !values.get("HOMEDRIVE").every((drive) => values.get("HOMEPATH").every((path) => samePath(drive + path, home)))) {
+      plan.set("HOMEDRIVE", null);
+      plan.set("HOMEPATH", null);
+    }
+    if ((values.has("HOME") || !values.has("USERPROFILE")) && !homeMatches) plan.set("HOME", home);
+  } else if (!homeMatches) plan.set("HOME", home);
+  return plan;
+}
+
+function applyGitEnvPlan(env, plan) {
+  for (const key of Object.keys(env)) if (plan.has(key.toUpperCase())) delete env[key];
+  for (const [key, value] of plan) if (value !== null) env[key] = value;
+}
+
+export function backupGitEnv(env = process.env) {
+  const plan = backupGitEnvPlan(env);
+  if (!plan.size) return env;
+  const safe = { ...env };
+  applyGitEnvPlan(safe, plan);
+  return safe;
+}
+
+export function applyBackupGitEnv(env = process.env) {
+  const plan = backupGitEnvPlan(env);
+  applyGitEnvPlan(env, plan);
+  return [...plan.keys()];
+}
+
 function git(root, args, options = {}) {
   return spawnSync("git", ["-C", root, ...args], {
-    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: 30_000, env: gitSafeEnv(), ...options
+    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: 30_000, env: backupGitEnv(), ...options
   });
 }
 
@@ -79,7 +148,38 @@ function insideBook(root, folder) {
     const common = git(folder, ["rev-parse", "--git-common-dir"]);
     if (common.status === 0 && realPath(resolve(folder, common.stdout.trim())) === locations[2]) return true;
   }
-  return false;
+  return reachesBook(root, locations, folder);
+}
+
+// A folder can also be reached by a name that path comparison can't see, for example through this
+// computer's own network share (\\localhost\C$\...). Leave an empty, uniquely named file in each book
+// location for a moment, and look for it from the destination and from each folder above it.
+function reachesBook(root, locations, folder) {
+  const name = `backup.probe-${process.pid}-${randomBytes(8).toString("hex")}`;
+  const weaver = join(root, ".weaver");
+  const directories = new Set([existsSync(weaver) ? weaver : null, locations[1], locations[2]].filter(Boolean).map(realPath));
+  const probes = [];
+  try {
+    for (const directory of directories) {
+      const probe = join(directory, name);
+      try { writeFileSync(probe, "", { flag: "wx" }); probes.push(probe); }
+      catch { /* An unwritable location cannot hold a probe. */ }
+    }
+    const paths = new Set();
+    for (const location of locations.filter(Boolean)) for (const probe of probes) {
+      const rel = relative(realPath(location), realPath(probe));
+      if (rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) paths.add(rel);
+    }
+    let current = resolve(folder);
+    while (true) {
+      if ([...paths].some((rel) => existsSync(join(current, rel)))) return true;
+      const parent = dirname(current);
+      if (parent === current) return false;
+      current = parent;
+    }
+  } finally {
+    for (const probe of probes) try { unlinkSync(probe); } catch { /* Always try to remove every probe. */ }
+  }
 }
 
 const gitLines = (result) => result.status === 0 ? result.stdout.replace(/\r?\n$/u, "").split(/\r?\n/u) : [];
@@ -91,6 +191,8 @@ function effectivePushUrls(root) {
 const expectedAddress = (record) => typeof record.push_url === "string" ? record.push_url : typeof record.remote_url === "string" ? record.remote_url : null;
 function addressMatches(root, expected, effective = effectivePushUrls(root)) {
   if (!effective.ok || effective.urls.length !== 1) return false;
+  // These settings change which program Git runs to reach the backup without changing its address.
+  if (git(root, ["config", "--get-regexp", `^remote\\.${BACKUP_REMOTE}\\.(receivepack|uploadpack|vcs)$`]).status !== 1) return false;
   if (expected !== null) return sanitizeGitText(effective.urls[0]) === expected;
   const raw = gitLines(git(root, ["config", "--get-all", `remote.${BACKUP_REMOTE}.url`]));
   return raw.length === 1 && sanitizeGitText(effective.urls[0]) === sanitizeGitText(raw[0]);
@@ -293,7 +395,7 @@ function pushOnce(root, { trigger, interactive, timeoutMs, expected }) {
   const saved = git(root, ["rev-parse", "--verify", `refs/heads/${branch}`]);
   if (saved.status !== 0) return failed("Your book has no saved history yet, so there is nothing to back up.", "Approve a chapter first, then run `npx weaver backup now`.");
   commit = saved.stdout.trim();
-  const env = interactive ? gitSafeEnv() : { ...gitSafeEnv(), GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" };
+  const env = interactive ? backupGitEnv() : { ...backupGitEnv(), GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" };
   // The timeout stops git itself; a stalled https transfer must also end on its own, or its
   // helper process would linger after git is stopped.
   const stall = interactive ? [] : ["-c", "http.lowSpeedLimit=1", "-c", "http.lowSpeedTime=60"];
@@ -303,9 +405,19 @@ function pushOnce(root, { trigger, interactive, timeoutMs, expected }) {
   const before = git(root, ["rev-parse", "--verify", "--quiet", tracking]);
   const pushed = git(root, [...stall, "push", BACKUP_REMOTE, `${commit}:refs/heads/${branch}`], { timeout: timeoutMs, env });
   if (pushed.status === 0) {
+    const putBack = () => git(root, before.status === 0 ? ["update-ref", tracking, before.stdout.trim()] : ["update-ref", "-d", tracking]);
     if (!addressMatches(root, expected)) {
-      git(root, before.status === 0 ? ["update-ref", tracking, before.stdout.trim()] : ["update-ref", "-d", tracking]);
+      putBack();
       return addressChanged();
+    }
+    // Ask the backup at the address the author set up which commit it now has. Something Weaver
+    // can't see could have sent the push elsewhere, or the backup service may not have kept it.
+    const confirm = git(root, [...stall, "ls-remote", effective.urls[0], `refs/heads/${branch}`], { env });
+    const received = gitLines(confirm).map((line) => line.split("\t")).find(([, ref]) => ref === `refs/heads/${branch}`)?.[0];
+    if (received !== commit) {
+      putBack();
+      if (confirm.status !== 0) return finish({ result: "failed", ...describeBackupFailure(`${confirm.stderr || ""}\n${confirm.stdout || ""}`, { trigger, timedOut: confirm.error?.code === "ETIMEDOUT" }) });
+      return failed("Your backup didn't have the latest decisions when Weaver checked it after the backup.", "Run `npx weaver backup now` to try again. If it keeps happening, contact PickBits.");
     }
     git(root, ["update-ref", tracking, commit]);
     return finish({ result: "ok", error: null, fix: null, detail: null });
@@ -376,7 +488,7 @@ export function backupNow(root, { interactive = false, timeoutMs = BACKUP_TIMEOU
 export function startBackgroundBackup(root, { trigger = "decision" } = {}) {
   try {
     if (!existsSync(join(root, BACKUP_RECORD))) return { started: false, reason: "not-configured" };
-    const child = spawn(process.execPath, [WORKER, resolve(root), trigger], { detached: true, stdio: "ignore", windowsHide: true, env: gitSafeEnv() });
+    const child = spawn(process.execPath, [WORKER, resolve(root), trigger], { detached: true, stdio: "ignore", windowsHide: true, env: backupGitEnv() });
     child.on("error", () => {});
     child.unref();
     return { started: true };

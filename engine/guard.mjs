@@ -122,14 +122,17 @@ export function shellGuard(payload, depth = 0) {
   // Flatten quotes to see commands inside cmd /c, powershell -Command, bash -c,
   // and code strings. This is deliberately conservative, not a shell parser.
   const flat = command.replace(/["'`]/gu, " ");
-  const author = /(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+(approve|reject|undo|rule|proposal|state:accept|release|import|guard\s+seal|backup\s+setup)(?=\s|$|[;&|])/iu.exec(flat);
+  // A shell drops quotes and escape characters inside a word (ap''prove, ap`prove, ap^prove and ap\prove all run approve).
+  const views = `${flat}\n${command.replace(/["'`^\\]/gu, "")}`;
+  const author = /(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+(approve|reject|undo|rule|proposal|state:accept|release|import|guard\s+seal|backup\s+setup)(?=\s|$|[;&|])/iu.exec(views);
   if (author) {
     if (author[1].toLowerCase().startsWith("backup")) return deny(BACKUP_REASON);
     const chapter = /--chapter(?:=|\s+)(\d+)/iu.exec(flat)?.[1];
     return deny(chapter && author[1].toLowerCase() === "approve" ? `That's the author's decision; ask them to approve chapter ${chapter} on the author page.` : AUTHOR_REASON);
   }
-  if (/(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+backup(?=[\s;&|]|$)[^;&|\r\n]*[^\S\r\n](?:setup|--remote)(?=\s|=|[;&|]|$)/iu.test(flat)) return deny(BACKUP_REASON);
-  if (/(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+guard(?=[\s;&|]|$)[^;&|\r\n]*[^\S\r\n]seal(?=\s|=|[;&|]|$)/iu.test(flat)) return deny(AUTHOR_REASON);
+  if (/(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+backup(?=[\s;&|]|$)[^;&|\r\n]*[^\S\r\n](?:setup|--remote)(?=\s|=|[;&|]|$)/iu.test(views)) return deny(BACKUP_REASON);
+  if (/(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+guard(?=[\s;&|]|$)[^;&|\r\n]*[^\S\r\n]seal(?=\s|=|[;&|]|$)/iu.test(views)) return deny(AUTHOR_REASON);
+  if (/(?:^|[^A-Za-z0-9_])(?:GCM_TRACE|GIT_TRACE_CURL|GIT_TRACE_REDACT|GIT_CURL_VERBOSE)/iu.test(command)) return deny(CREDENTIAL_REASON);
   let project = {};
   if (existsSync(join(root, "project.json"))) project = JSON.parse(readFileSync(join(root, "project.json"), "utf8"));
   const port = Number(project.studio_port ?? project.studio?.port ?? 4187);

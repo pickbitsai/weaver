@@ -345,12 +345,14 @@ old, and when the backup address was changed outside Weaver. These are warnings;
 they never stop the author's work.
 
 What is backed up: the book's committed history, which includes every approval,
-undo, ruling, story-state acceptance, settings seal, import and release. Changes
-still waiting for approval, rejections (the rejected text and its note in
-`.weaver/rejected/`), proposals and other working files in `.weaver/`, built
-releases and voice profiles stay on this computer, so `weaver history` on a
-restored book lists approvals and undos but not rejections. Releases and voice
-profiles can be rebuilt from the history.
+undo, ruling, story-state acceptance, settings seal and import. A release adds
+nothing to the history: its files in `releases/` stay on this computer, so a
+restored book has no record that a release was made, and the release can be
+built again from the history. Changes still waiting for approval, rejections (the
+rejected text and its note in `.weaver/rejected/`), proposals and other working
+files in `.weaver/`, and voice profiles stay on this computer too, so
+`weaver history` on a restored book lists approvals and undos but not rejections.
+Voice profiles can also be rebuilt from the history.
 
 Restore on a new computer: install Git and Node.js 22 or newer, install Weaver
 as in [Quick start](#quick-start), then clone the backup and let doctor check it:
@@ -369,15 +371,40 @@ with `git ls-remote --heads <folder>` and clone again with `--branch <name>` (fo
 example `--branch main`).
 
 The AI can run `backup status` and `backup now`, because pushing history the
-author has already saved is safe. It can't run `backup setup`; the shell guards
-block `git remote`, `git push` and reading Git sign-in details (`git credential`);
-and before every backup Weaver checks that Git still sends it to the address the
-author set up. Backups ignore Git settings passed in environment variables (such
-as `GIT_CONFIG_*`, `GIT_DIR` or `GIT_SSH_COMMAND`), and so do approvals made in
-the studio, whoever started it. Keep Git settings, such as a custom SSH program
-(`core.sshCommand`), in Git's own configuration. So only the author chooses where
-the book is copied. After upgrading Weaver, PickBits re-runs `weaver hooks install`
-and reseals the settings so existing books get these rules.
+author has already saved is safe. Weaver refuses `backup setup` in Claude Code and
+Codex shells. The shell guards also block it, along with `git remote`, `git push`,
+reading Git sign-in details (`git credential`), and the Git and Git Credential
+Manager trace settings that can write sign-in details to a file (`GCM_TRACE`,
+`GIT_TRACE_CURL`, `GIT_CURL_VERBOSE`).
+
+Backups use only the book's own Git settings, the settings of Git itself on this
+computer, and the author's Git settings in the home folder that the computer's
+user account records (for example `~/.gitconfig`). They ignore Git settings
+passed in environment variables, including a different home folder (`HOME`,
+`USERPROFILE`), a different settings folder (`XDG_CONFIG_HOME`), `GIT_CONFIG_*`,
+`GIT_DIR` and `GIT_SSH_COMMAND`, and they leave out trace settings. Approvals
+made in the studio ignore them too, whoever started the studio. Keep Git
+settings, such as a custom SSH program (`core.sshCommand`), in the Git settings
+file in your home folder (`~/.gitconfig`).
+
+Before every backup, Weaver checks that Git still sends it to the address the
+author set up, and that no setting changes which program Git runs to reach it
+(`receivepack`, `uploadpack` or `vcs` on the `weaver-backup` remote). After the
+push, Weaver asks the backup at that address which commit it now has, and
+records a failure unless it is the commit just sent. So the AI can't redirect a
+backup by starting the studio or running `backup now` with Git settings of its
+own. If a push still doesn't reach the backup the author chose, for example
+because a setting on the `weaver-backup` remote sent it elsewhere or the backup
+service didn't keep it, status, doctor and the studio footer show a failed
+backup instead of "up to date".
+
+These guards stop the AI's ordinary commands and common disguises, such as
+quotes or escape characters inside a command name. They are not a sandbox: the
+AI runs as the same user on the same computer, so a determined one could get
+around them. Doctor, the sealed settings and the approval history are the
+support trail for anything that gets through. After upgrading Weaver, PickBits
+re-runs `weaver hooks install` and reseals the settings so existing books get
+these rules.
 
 ## Keep narrative state current
 

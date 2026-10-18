@@ -20,7 +20,7 @@ import { attributeDialogue } from "./voice.mjs";
 import { loadRules, ruleScopeDescription } from "./rules.mjs";
 import { acceptProposal, listProposals, rejectProposal } from "./repair.mjs";
 import { latestBookRun } from "./run.mjs";
-import { startBackgroundBackup, dropGitOverrides, backupNeeded } from "./backup.mjs";
+import { startBackgroundBackup, dropGitOverrides, backupNeeded, applyBackupGitEnv } from "./backup.mjs";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(PACKAGE_ROOT, "scripts", "weaver.mjs");
@@ -272,6 +272,7 @@ async function requestJson(request) {
 export async function startStudio({ root = process.cwd(), port = null } = {}) {
   root = resolve(root);
   dropGitOverrides(process.env); // Approvals and backups made from the studio use the book's own Git settings, whoever started it.
+  applyBackupGitEnv(process.env); // Git's home and settings folders come from this computer's user account, whoever started the studio.
   const project = readProject(root);
   const selectedPort = port === null ? project.studio_port ?? project.studio?.port ?? 4187 : Number(port);
   if (!Number.isInteger(selectedPort) || selectedPort < 0 || selectedPort > 65535) throw new Error("Studio port must be an integer from 0 to 65535.");
