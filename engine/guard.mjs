@@ -105,11 +105,15 @@ function gitCommandIndex(tokens, index) {
 // An allowlist, not a blocklist: the whole raw command must be one Weaver launcher, `report`, and known
 // options with literal values. Any shell syntax that could run, expand or redirect something else (Bash,
 // PowerShell, zsh, cmd) means no exemption. Returns the --out value's pieces, or null.
+// Only plain ASCII is accepted anywhere in the command: letters, digits, space, tab, straight quotes and
+// _ . / \ : , + ~ @ -. That refuses typographic quotes and dashes (PowerShell treats U+2018-U+201E as quotes
+// and U+2013-U+2015 as dashes), Unicode spaces, and every shell symbol ($ ` % ^ ! ; & | < > ( ) { } [ ] * ? = #).
+const REPORT_PLAIN = /^[A-Za-z0-9 \t_./\\:,+~@"'-]*$/u;
 const REPORT_WORD = /\s*(?:"([^"$`\r\n]*)"|'([^'$`\r\n]*)'|([\p{L}\p{N}_./\\:,+~-][\p{L}\p{N}_./\\:,+~@-]*))(?=\s|$)/uy;
 const reportPieces = (value) => [value, ...(value.match(/[^\s<>(),{}]+/gu) || [])];
 function reportOutExemption(command) {
   const text = command.trim(), words = [];
-  if (/[\r\n]/u.test(text)) return null;
+  if (!REPORT_PLAIN.test(text)) return null;
   for (REPORT_WORD.lastIndex = 0; REPORT_WORD.lastIndex < text.length;) {
     const match = REPORT_WORD.exec(text);
     // A trailing backslash joins words in Bash or continues a double-quoted string.
@@ -188,6 +192,10 @@ export function shellGuard(payload, depth = 0) {
       if (name === "npx" && tokens.slice(next).some((token) => /^(?:@pickbitsai\/)?weaver@|^--package(?:=|$)|^-p$/iu.test(token))) return deny(TOOL_REASON);
     }
   }
+  // `weaver report --out <file>` may save outside the book; reportOutExemption (an allowlist over the raw
+  // command) decides when that one destination skips the outside-the-book check. It applies only when the
+  // whole command is that single report command: any second command on the line means no exemption.
+  const reportOut = flat.split(/[;&|\r\n]+/u).length === 1 ? reportOutExemption(command) : null;
   for (const segment of flat.split(/[;&|\r\n]+/u)) {
     const tokens = segment.match(/[^\s<>(),{}]+|>>?/gu) || [];
     // Read-only Git queries and tool invocations can name protected files as
@@ -199,9 +207,6 @@ export function shellGuard(payload, depth = 0) {
     // Also inspect quoted paths with spaces (the flattened tokens handle code
     // strings such as fs.writeFileSync('quality/rules.json', ...)).
     const candidates = [...(withoutLauncher.match(/[^\s<>(),{}]+|>>?/gu) || [])];
-    // `weaver report --out <file>` may save outside the book; reportOutExemption (an allowlist over
-    // the raw command) decides when that one destination skips the outside-the-book check.
-    const reportOut = reportOutExemption(command);
     // After a Weaver launcher the next word is its subcommand (e.g. `review`), not a path.
     if (withoutLauncher !== segment) candidates.shift();
     for (const match of command.matchAll(/["']([^"'\r\n]+)["']/gu)) if (/^[a-z]:[\\/]|^\.{1,2}[\\/]|^\//iu.test(match[1])) candidates.push(match[1]);

@@ -418,7 +418,7 @@ test("shell hook allows report sharing and denies a protected destination", (t) 
   // splatting, zsh =( ), bash ${ cmd; }, quoted redirect targets, extra words and other launchers all fall
   // back to the normal outside-the-book denial.
   const decide = (tool, command) => runHook("shell", { cwd: root, tool_name: tool, tool_input: { command } })?.hookSpecificOutput?.permissionDecision;
-  for (const command of ["npx weaver report --out ../report.html", "npx.cmd weaver report --out '..\\My Reports\\r.html' --chapters 2,4,7-9 --sections summary,findings --json", "node_modules/.bin/weaver report --json --out ../r.html"]) {
+  for (const command of ["npx weaver report --out ../report.html", "npx.cmd weaver report --out '..\\My Reports\\r.html' --chapters 2,4,7-9 --sections summary,findings --json", "node_modules/.bin/weaver report --json --out ../r.html", "npx weaver report --root . --out ../r.html"]) {
     for (const tool of ["PowerShell", "Bash"]) assert.notEqual(decide(tool, command), "deny", `${tool}: ${command}`);
   }
   const reuses = [
@@ -442,6 +442,23 @@ test("shell hook allows report sharing and denies a protected destination", (t) 
     "node ../tools/weaver.mjs report --out ../r.html"
   ];
   for (const command of reuses) for (const tool of ["PowerShell", "Bash"]) assert.equal(decide(tool, command), "deny", `${tool}: ${command}`);
+  // PowerShell also closes strings on typographic quotes (U+2018-U+201E) and reads U+2013-U+2015 as dashes, so
+  // what looks like one quoted --out value can hide a second statement. Only plain ASCII keeps the exemption,
+  // and only for a single command: a separator anywhere on the line, even inside quotes, means no exemption.
+  // Left/right double, low double, left/right single, low single, reversed single, en dash.
+  const [L, R, LOW, SL, SR, LOW1, REV1, EN] = [0x201C, 0x201D, 0x201E, 0x2018, 0x2019, 0x201A, 0x201B, 0x2013].map((code) => String.fromCharCode(code));
+  const typographic = [
+    `npx weaver report --out "../r.html${R} ; Remove-Item ../victim.txt ; ${L}"`,
+    `npx weaver report --out "../victim.txt${R} ; Remove-Item ../victim.txt ; ${L}"`,
+    `npx weaver report --out "../r.html${R}+(Remove-Item ../victim.txt)+${L}"`,
+    `node node_modules/@pickbitsai/weaver/scripts/weaver.mjs report --out "../r.html${LOW} ; Copy-Item notes.md ../sibling/quality/rules.json ; ${L}"`,
+    `npx weaver report --out '../r.html${SR} ; Remove-Item ../victim.txt ; ${SL}'`,
+    `npx --no-install weaver report --out '../r.html${LOW1} ; Set-Content ../victim.txt pwned ; ${REV1}'`,
+    "npx weaver report --out \"../r.html ; rm ../victim.txt\"",
+    `npx weaver report --out ../r${String.fromCharCode(0xE9)}sum${String.fromCharCode(0xE9)}.html`,
+    `npx weaver report --out ../r.html ${EN}${EN}root ../other-book`
+  ];
+  for (const command of typographic) for (const tool of ["PowerShell", "Bash"]) assert.equal(decide(tool, command), "deny", `${tool}: ${command}`);
 });
 
 test("studio report download has offline headers, navigation, and no book writes", async (t) => {
