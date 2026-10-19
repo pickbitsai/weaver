@@ -121,7 +121,9 @@ The report contains manuscript excerpts: share it only with people you trust.
 Weaver saves reports only outside book folders, so the AI working in a book can't
 change them and they stay out of the book's history. From inside the book, use
 `--out ../my-book-report.html`. Weaver never replaces a file that is not a Weaver
-report, such as a Reader Edition release.
+report, such as a Reader Edition release. An AI assistant working in the book may
+save a report outside it only with a plain report command (`--out` plus any of
+`--chapters`, `--sections`, `--json`) and nothing else on the same line.
 
 ## Repair a finished book
 

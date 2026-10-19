@@ -413,6 +413,35 @@ test("shell hook allows report sharing and denies a protected destination", (t) 
     'npx weaver report --out ../r.html <(rm ../r.html)'
   ];
   for (const command of ["npx weaver report --out ../report.html > ../log.txt", "npx weaver report --out ../report.html > ../report.html","npx weaver report --out ../report.html --root ../other-book", "npx weaver report --out ../report.html; cp notes.md ../notes.md", "npx weaver export --format md --out ../book.md", ...nested]) assert.equal(hook(command)?.hookSpecificOutput?.permissionDecision, "deny", command);
+  // The exemption is an allowlist over the raw command (one Weaver launcher, `report`, known options with
+  // literal values), for the PowerShell tool as well as Bash. PowerShell grouping, array subexpressions and
+  // splatting, zsh =( ), bash ${ cmd; }, quoted redirect targets, extra words and other launchers all fall
+  // back to the normal outside-the-book denial.
+  const decide = (tool, command) => runHook("shell", { cwd: root, tool_name: tool, tool_input: { command } })?.hookSpecificOutput?.permissionDecision;
+  for (const command of ["npx weaver report --out ../report.html", "npx.cmd weaver report --out '..\\My Reports\\r.html' --chapters 2,4,7-9 --sections summary,findings --json", "node_modules/.bin/weaver report --json --out ../r.html"]) {
+    for (const tool of ["PowerShell", "Bash"]) assert.notEqual(decide(tool, command), "deny", `${tool}: ${command}`);
+  }
+  const reuses = [
+    "npx weaver report --out ../r.html (Remove-Item ../r.html)",
+    "npx weaver report --out ../r.html @(Remove-Item ../r.html)",
+    "npx weaver report --out ../sibling/quality/rules.json (Copy-Item notes.md ../sibling/quality/rules.json)",
+    "npx weaver report --out ../r.html (Set-Content ../r.html pwned)",
+    "npx weaver report --out ../r.html $(Remove-Item ../r.html)",
+    'npx weaver report --out "../r.html$(Remove-Item ../r.html)"',
+    "npx weaver report --out ../r.html @splat",
+    "npx weaver report --out ../r.html =(rm ../r.html)",
+    "npx weaver report --out ../r.html ${ rm ../r.html; }",
+    "npx weaver report --out ../r.html >'../r.html'",
+    'npx weaver report --out ../r.html >"../r.html"',
+    "npx weaver report --out ../r.html >$'../r.html'",
+    "npx weaver report --out ../sibling/quality/rules.json 2>'../sibling/quality/rules.json'",
+    "npx weaver report --out ../r.html ../r.html",
+    "npx weaver report --out ../r.html --out ../other.html",
+    'npx weaver report --out "../other-book reports.html" --root ../other-book',
+    "./weaver report --out ../r.html",
+    "node ../tools/weaver.mjs report --out ../r.html"
+  ];
+  for (const command of reuses) for (const tool of ["PowerShell", "Bash"]) assert.equal(decide(tool, command), "deny", `${tool}: ${command}`);
 });
 
 test("studio report download has offline headers, navigation, and no book writes", async (t) => {

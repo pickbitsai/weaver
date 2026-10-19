@@ -5,7 +5,7 @@
   "files": {
     "LICENSE": "3954ad2ee7d56cfda60326c71dcfd3d7edd79a44727f51b5ca5e4b7c33b8c6d6",
     "NOTICE": "83abe7f22edf5a06f7b4814e8b4b4b124e1b612bd81dd4c6542c0b119fab4976",
-    "README.md": "194da71dea0b369c651a32a3550af8b42d5a95f3128215a9028f0f7e56b2ecd8",
+    "README.md": "42f73506a7126799aadc52547cbe677920f071db51b19063f99d59de415adcad",
     "SECURITY.md": "5c9c72ffaa8dfdc744360ea666d2082c68bba2479c61d13810bbd595498afe2b",
     "contracts/characters.schema.json": "f9bd6fcc9c2ad363fd805d8d5209c9a292204b0beaf9035a4b6ceadacfd36c7b",
     "contracts/facts-ledger.schema.json": "109ca6f8e761fe3aa1ac753b7ff4ec41cc59d14c98f49c8bce46d21e54ec608d",
@@ -33,7 +33,7 @@
     "engine/doctor.mjs": "571c2aa0c1c80777b87bfba2e6c27d0fb512fe333c46b811d2190a10a4d9234d",
     "engine/export.mjs": "092ad9a4687cf24ca5daa822c844879c8314adc227542cf46ec7b871e43f9f3c",
     "engine/findings.mjs": "aeb192f68f89d31b80e45ae0673ee3220da58a21207b94aa5bc12a512c652703",
-    "engine/guard.mjs": "f75369c210c23615c26de0ca21ed47a307b84f76e183982527f8c59623aaf253",
+    "engine/guard.mjs": "2a10d1deae00e3978274777ad709d9716c9be5214abb84073bd7c0b0f5192236",
     "engine/hooks.mjs": "f219fbbda12e1868622616da95f413167e3b2ef17dbecdb41a6554cae2ba1e67",
     "engine/host.mjs": "aa14a4421369b8c8be19a0c24244e898708a38f5d0a49cc189575ce4ad7ece14",
     "engine/identity.mjs": "670f211b093aa783a0d6ed24be566239c438deb9da75e9ef20748e2c1b057364",

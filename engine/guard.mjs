@@ -101,6 +101,47 @@ function gitCommandIndex(tokens, index) {
   return next;
 }
 
+// `weaver report --out <file>` may save outside the book (the report refuses destinations inside one).
+// An allowlist, not a blocklist: the whole raw command must be one Weaver launcher, `report`, and known
+// options with literal values. Any shell syntax that could run, expand or redirect something else (Bash,
+// PowerShell, zsh, cmd) means no exemption. Returns the --out value's pieces, or null.
+const REPORT_WORD = /\s*(?:"([^"$`\r\n]*)"|'([^'$`\r\n]*)'|([\p{L}\p{N}_./\\:,+~-][\p{L}\p{N}_./\\:,+~@-]*))(?=\s|$)/uy;
+const reportPieces = (value) => [value, ...(value.match(/[^\s<>(),{}]+/gu) || [])];
+function reportOutExemption(command) {
+  const text = command.trim(), words = [];
+  if (/[\r\n]/u.test(text)) return null;
+  for (REPORT_WORD.lastIndex = 0; REPORT_WORD.lastIndex < text.length;) {
+    const match = REPORT_WORD.exec(text);
+    // A trailing backslash joins words in Bash or continues a double-quoted string.
+    if (!match || /\\$/u.test(match[1] ?? match[2] ?? match[3])) return null;
+    words.push(match[3] === undefined ? { value: match[1] ?? match[2] } : { value: match[3], plain: true });
+  }
+  const plain = (index) => (words[index]?.plain ? words[index].value : "");
+  let at = 0;
+  // Only Weaver's own launchers: npx [--no-install] weaver, node_modules/.bin/weaver, or node with the package script.
+  if (/^node(?:\.exe)?$/iu.test(plain(0)) && /(?:^|[\\/])node_modules[\\/]@pickbitsai[\\/]weaver[\\/]scripts[\\/]weaver\.mjs$/iu.test(plain(1))) at = 2;
+  else {
+    if (/^npx(?:\.cmd)?$/iu.test(plain(0))) at = plain(1) === "--no-install" ? 2 : 1;
+    if (!/^(?:(?:\.[\\/])?node_modules[\\/]\.bin[\\/])?weaver(?:\.cmd)?$/iu.test(plain(at))) return null;
+    at += 1;
+  }
+  // `@` is literal inside a launcher path (node_modules/@pickbitsai/...) or quotes; refused elsewhere.
+  if (plain(at) !== "report" || words.slice(at).some((word) => word.plain && word.value.includes("@"))) return null;
+  let out = null;
+  const others = [];
+  for (let index = at + 1; index < words.length; index += 1) {
+    const option = plain(index), value = words[index + 1]?.value;
+    if (option === "--json") continue;
+    if (!["--out", "--root", "--chapters", "--sections"].includes(option) || !value || value.startsWith("-")) return null;
+    index += 1;
+    if (option !== "--out") others.push(...reportPieces(value));
+    else if (out === null) out = value;
+    else return null;
+  }
+  const pieces = out === null ? [] : reportPieces(out);
+  return pieces.length && !others.some((piece) => pieces.includes(piece)) ? new Set(pieces) : null;
+}
+
 export function shellGuard(payload, depth = 0) {
   const command = payload?.tool_input?.command;
   if (typeof command !== "string" || !command.trim()) return null;
@@ -158,15 +199,9 @@ export function shellGuard(payload, depth = 0) {
     // Also inspect quoted paths with spaces (the flattened tokens handle code
     // strings such as fs.writeFileSync('quality/rules.json', ...)).
     const candidates = [...(withoutLauncher.match(/[^\s<>(),{}]+|>>?/gu) || [])];
-    // `weaver report --out <file>` is the one command allowed to save outside the book, because the
-    // report itself refuses any destination inside a book. Exempt only that call's single --out value,
-    // never when the raw command nests another command (command or process substitution) that could
-    // reuse the path. `flat` turns backticks into spaces, so test the raw command for them.
-    const nestsCommand = /\$\(|`|<\(|>\(/u.test(command);
-    const outValueAt = words.findIndex((word, index) => (words[index - 1] || "").toLowerCase() === "--out");
-    const reportOut = !nestsCommand && withoutLauncher !== segment && candidates[0]?.toLowerCase() === "report" && outValueAt >= 0
-      ? new Set([words[outValueAt], ...words[outValueAt].split(/\s+/u)])
-      : null;
+    // `weaver report --out <file>` may save outside the book; reportOutExemption (an allowlist over
+    // the raw command) decides when that one destination skips the outside-the-book check.
+    const reportOut = reportOutExemption(command);
     // After a Weaver launcher the next word is its subcommand (e.g. `review`), not a path.
     if (withoutLauncher !== segment) candidates.shift();
     for (const match of command.matchAll(/["']([^"'\r\n]+)["']/gu)) if (/^[a-z]:[\\/]|^\.{1,2}[\\/]|^\//iu.test(match[1])) candidates.push(match[1]);

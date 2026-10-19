@@ -9,7 +9,7 @@ const calls = existsSync(countPath) ? JSON.parse(readFileSync(countPath, "utf8")
 calls.push(unit);
 writeFileSync(countPath, JSON.stringify(calls));
 const attempt = calls.filter((item) => item === unit).length;
-if (mode === "timeouts" && /STATE packet 1-1/u.test(unit) && attempt <= 2) await new Promise((ready) => setTimeout(ready, 2500));
+if (mode === "timeouts" && /STATE packet 1-1/u.test(unit) && attempt <= 2) await new Promise((ready) => setTimeout(ready, 6000));
 if (mode === "failure" && /STATE packet 1-2/u.test(unit)) process.exit(7);
 const active = ".weaver/proposal-host-active";
 if (existsSync(active)) throw new Error("overlapping host calls");
