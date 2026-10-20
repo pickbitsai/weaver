@@ -109,6 +109,51 @@ function gitCommandIndex(tokens, index) {
   return next;
 }
 
+// `weaver report --out <file>` may save outside the book (the report refuses destinations inside one).
+// An allowlist, not a blocklist: the whole raw command must be one Weaver launcher, `report`, and known
+// options with literal values. Any shell syntax that could run, expand or redirect something else (Bash,
+// PowerShell, zsh, cmd) means no exemption. Returns the --out value's pieces, or null.
+// Only plain ASCII is accepted anywhere in the command: letters, digits, space, tab, straight quotes and
+// _ . / \ : , + ~ @ -. That refuses typographic quotes and dashes (PowerShell treats U+2018-U+201E as quotes
+// and U+2013-U+2015 as dashes), Unicode spaces, and every shell symbol ($ ` % ^ ! ; & | < > ( ) { } [ ] * ? = #).
+const REPORT_PLAIN = /^[A-Za-z0-9 \t_./\\:,+~@"'-]*$/u;
+const REPORT_WORD = /\s*(?:"([^"$`\r\n]*)"|'([^'$`\r\n]*)'|([\p{L}\p{N}_./\\:,+~-][\p{L}\p{N}_./\\:,+~@-]*))(?=\s|$)/uy;
+const reportPieces = (value) => [value, ...(value.match(/[^\s<>(),{}]+/gu) || [])];
+function reportOutExemption(command) {
+  const text = command.trim(), words = [];
+  if (!REPORT_PLAIN.test(text)) return null;
+  for (REPORT_WORD.lastIndex = 0; REPORT_WORD.lastIndex < text.length;) {
+    const match = REPORT_WORD.exec(text);
+    // A trailing backslash joins words in Bash or continues a double-quoted string.
+    if (!match || /\\$/u.test(match[1] ?? match[2] ?? match[3])) return null;
+    words.push(match[3] === undefined ? { value: match[1] ?? match[2] } : { value: match[3], plain: true });
+  }
+  const plain = (index) => (words[index]?.plain ? words[index].value : "");
+  let at = 0;
+  // Only Weaver's own launchers: npx [--no-install] weaver, node_modules/.bin/weaver, or node with the package script.
+  if (/^node(?:\.exe)?$/iu.test(plain(0)) && /(?:^|[\\/])node_modules[\\/]@pickbitsai[\\/]weaver[\\/]scripts[\\/]weaver\.mjs$/iu.test(plain(1))) at = 2;
+  else {
+    if (/^npx(?:\.cmd)?$/iu.test(plain(0))) at = plain(1) === "--no-install" ? 2 : 1;
+    if (!/^(?:(?:\.[\\/])?node_modules[\\/]\.bin[\\/])?weaver(?:\.cmd)?$/iu.test(plain(at))) return null;
+    at += 1;
+  }
+  // `@` is literal inside a launcher path (node_modules/@pickbitsai/...) or quotes; refused elsewhere.
+  if (plain(at) !== "report" || words.slice(at).some((word) => word.plain && word.value.includes("@"))) return null;
+  let out = null;
+  const others = [];
+  for (let index = at + 1; index < words.length; index += 1) {
+    const option = plain(index), value = words[index + 1]?.value;
+    if (option === "--json") continue;
+    if (!["--out", "--root", "--chapters", "--sections"].includes(option) || !value || value.startsWith("-")) return null;
+    index += 1;
+    if (option !== "--out") others.push(...reportPieces(value));
+    else if (out === null) out = value;
+    else return null;
+  }
+  const pieces = out === null ? [] : reportPieces(out);
+  return pieces.length && !others.some((piece) => pieces.includes(piece)) ? new Set(pieces) : null;
+}
+
 export function shellGuard(payload, depth = 0) {
   const command = payload?.tool_input?.command;
   if (typeof command !== "string" || !command.trim()) return null;
@@ -164,6 +209,10 @@ export function shellGuard(payload, depth = 0) {
       if (name === "npx" && tokens.slice(next).some((token) => /^(?:@pickbitsai\/)?weaver@|^--package(?:=|$)|^-p$/iu.test(token))) return deny(TOOL_REASON);
     }
   }
+  // `weaver report --out <file>` may save outside the book; reportOutExemption (an allowlist over the raw
+  // command) decides when that one destination skips the outside-the-book check. It applies only when the
+  // whole command is that single report command: any second command on the line means no exemption.
+  const reportOut = flat.split(/[;&|\r\n]+/u).length === 1 ? reportOutExemption(command) : null;
   for (const segment of flat.split(/[;&|\r\n]+/u)) {
     const tokens = segment.match(/[^\s<>(),{}]+|>>?/gu) || [];
     // Read-only Git queries and tool invocations can name protected files as
@@ -184,6 +233,7 @@ export function shellGuard(payload, depth = 0) {
       // A bare word is not necessarily a path; named protected files and
       // explicit absolute/parent paths are the useful signals here.
       const redirectTarget = new RegExp(`>+\\s*${token.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?:\\s|$)`, "u").test(segment);
+      if (reportOut?.has(token) && blocked === "outside the book folder" && !redirectTarget) continue;
       if (blocked && (!readOnly || redirectTarget)) return deny(`${blocked}: ${blocked.toLowerCase().startsWith("node_modules/") ? TOOL_REASON : SETTINGS_REASON}`);
     }
   }

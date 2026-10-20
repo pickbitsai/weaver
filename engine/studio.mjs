@@ -28,15 +28,15 @@ const ASSETS = new Map([
   ["/studio.css", ["text/css; charset=utf-8", readFileSync(join(PACKAGE_ROOT, "studio", "studio.css"))]],
   ["/studio.js", ["text/javascript; charset=utf-8", readFileSync(join(PACKAGE_ROOT, "studio", "studio.js"))]]
 ]);
-const NAV = [["/", "Home"], ["/book", "Book"], ["/characters", "Characters"], ["/places", "Places"], ["/threads", "Threads"], ["/findings", "Findings"], ["/proposals", "Proposals"], ["/rules", "Rules"], ["/changes", "Changes"], ["/history", "History"], ["/jobs", "Jobs"]];
-const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+const NAV = [["/", "Home"], ["/book", "Book"], ["/characters", "Characters"], ["/places", "Places"], ["/threads", "Threads"], ["/findings", "Findings"], ["/proposals", "Proposals"], ["/rules", "Rules"], ["/changes", "Changes"], ["/history", "History"], ["/jobs", "Jobs"], ["/report.html", "Download report"]];
+export const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 const chapterSlug = (number) => `chapter-${String(number).padStart(2, "0")}`;
 const sceneSlug = (number) => `scene-${String(number).padStart(2, "0")}`;
 const chapterHref = (number) => `/book/${chapterSlug(number)}`;
 const sceneHref = (scene) => `${chapterHref(scene.chapter)}/${sceneSlug(scene.scene)}`;
 const paragraphs = (prose) => prose.split(/\n\s*\n/u).filter((part) => part.trim());
 const list = (items) => items.length ? `<ul>${items.map((item) => `<li>${item}</li>`).join("")}</ul>` : "<p>None yet.</p>";
-const localMessage = (message, root) => String(message || "Something went wrong.").replaceAll(root, "the book folder").replace(/[A-Za-z]:\\[^\s:]+/gu, "a local file");
+export const localMessage = (message, root) => String(message || "Something went wrong.").replaceAll(root, "the book folder").replace(/[A-Za-z]:\\[^\s:]+/gu, "a local file");
 
 function gitSubjects(root) {
   const result = spawnSync("git", ["-C", root, "log", "--reverse", "--format=%s"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
@@ -48,9 +48,17 @@ export function approvalProgress(root, scenes) {
   let baseline = -1;
   subjects.forEach((subject, index) => { if (/^(?:Import original manuscript|Initialize book)/u.test(subject)) baseline = index; });
   const approved = new Set();
+  const approvals = new Map();
   for (const subject of subjects.slice(baseline + 1)) {
-    const match = /^(?:Approve chapter |Repairs accepted, chapter )(\d+)(?::| |$)/u.exec(subject);
-    if (match) approved.add(Number(match[1]));
+    const reverted = /^Revert "(.+)"$/u.exec(subject);
+    const match = /^(?:Approve chapter |Repairs accepted, chapter )(\d+)(?::| |$)/u.exec(reverted ? reverted[1] : subject);
+    if (match) {
+      const chapter = Number(match[1]);
+      const count = (approvals.get(chapter) || 0) + (reverted ? -1 : 1);
+      approvals.set(chapter, count);
+      if (count > 0) approved.add(chapter);
+      else approved.delete(chapter);
+    }
   }
   return { approved, total: new Set(scenes.map((scene) => scene.chapter)).size };
 }
@@ -99,7 +107,7 @@ function statusChips(chapter, pending, findings, approved) {
   return chips.map((chip) => `<span class="chip">${chip}</span>`).join(" ");
 }
 
-function placeGroups(ledger) {
+export function placeGroups(ledger) {
   const places = new Map();
   for (const [subject, facts] of Object.entries(ledger.subjects || {})) for (const fact of facts) {
     if (fact.kind !== "location") continue;
@@ -110,7 +118,7 @@ function placeGroups(ledger) {
   return places;
 }
 
-function threadGroups(root, project, scenes) {
+export function threadGroups(root, project, scenes) {
   const threads = new Map();
   for (const scene of scenes) {
     const path = statePath(root, project, scene.id);
@@ -234,12 +242,21 @@ function pageBody(path, root, project, job) {
   return null;
 }
 
+// The setup-check summary shown in the studio footer and in the shareable report.
+export function doctorStatus(doctor) {
+  const guardChecks = doctor.checks.filter((check) => GUARD_CHECK_IDS.includes(check.id));
+  return {
+    first: doctor.blocking[0],
+    guardOn: !guardChecks.some((check) => check.status === "blocking"),
+    guardProblem: (guardChecks.find((check) => check.status === "blocking") || guardChecks.find((check) => check.status === "warning"))?.findings[0],
+    integrity: doctor.checks.find((item) => item.id === "install-integrity")?.status === "pass",
+    labels: Object.values(doctor.guardrails).map((item) => item.label)
+  };
+}
+
 function layout(body, root, project) {
   const doctor = runDoctor({ bookRoot: root });
-  const first = doctor.blocking[0];
-  const guardChecks = doctor.checks.filter((check) => GUARD_CHECK_IDS.includes(check.id));
-  const guardOn = !guardChecks.some((check) => check.status === "blocking");
-  const guardProblem = (guardChecks.find((check) => check.status === "blocking") || guardChecks.find((check) => check.status === "warning"))?.findings[0];
+  const { first, guardOn, guardProblem } = doctorStatus(doctor);
   const integrity = doctor.checks.find((item) => item.id === "install-integrity")?.status === "pass";
   const check = doctor.checks.find((item) => item.id === "backup");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(project.title)} · Weaver Studio</title><link rel="stylesheet" href="/studio.css"><script src="/studio.js" defer></script></head><body><a class="skip" href="#main">Skip to content</a><header><strong>Weaver Studio</strong><nav aria-label="Main navigation">${NAV.map(([href, label]) => `<a href="${href}">${label}</a>`).join("")}</nav></header><main id="main">${body}</main><p id="action-message" role="status" aria-live="polite"></p><footer><h2>Doctor</h2><p>Supported setup: ${doctor.ok ? "yes" : "no"}${first ? ` · ${esc(first.problem)}. ${esc(first.why)} ${esc(first.fix)}` : ""}</p><p>Guardrails: ${guardOn ? "on" : "off"}${guardProblem ? ` &middot; ${esc(guardProblem.problem)}` : ""}</p>${Object.values(doctor.guardrails).map((item) => `<p>${esc(item.label)}</p>`).join("")}<p>Weaver install unchanged: ${integrity ? "yes" : "no"}</p>${check ? `<p>${esc(check.summary)}</p>` : ""}</footer></body></html>`;
@@ -286,6 +303,18 @@ export async function startStudio({ root = process.cwd(), port = null } = {}) {
     if (request.method === "GET") {
       if (path === "/api/health") { json(response, 200, { service: "pickbits-weaver-studio", generator: GENERATOR, book: project.project_id }); return; }
       if (path === "/api/jobs/current") { json(response, 200, currentJob ? { kind: currentJob.kind, host: currentJob.host, started_at: currentJob.started_at, state: currentJob.state, log_tail: currentJob.log_tail.slice(-40), ...(currentJob.kind === "book" ? { run: latestBookRun(root) } : {}) } : { kind: null, started_at: null, state: null, log_tail: [] }); return; }
+      if (path === "/report.html") {
+        // The whole-book report leaves only for the local studio page (a rebound host name gets nothing).
+        if (![`127.0.0.1:${boundPort}`, `localhost:${boundPort}`].includes(request.headers.host)) { send(response, 403, "text/plain; charset=utf-8", "The report is only available from the local studio page."); return; }
+        try {
+          const { buildReport, reportFileName, reportCsp } = await import("./report.mjs");
+          const liveProject = readProject(root);
+          const { html } = buildReport(root);
+          response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-disposition": `attachment; filename="${reportFileName(liveProject)}"`, "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "content-security-policy": reportCsp({ header: true }) });
+          response.end(html);
+        } catch (error) { send(response, 500, "text/plain; charset=utf-8", localMessage(error.message, root)); }
+        return;
+      }
       if (ASSETS.has(path)) { const [type, data] = ASSETS.get(path); send(response, 200, type, data); return; }
       try { const liveProject = readProject(root); const body = pageBody(path, root, liveProject, currentJob); if (body !== null) send(response, 200, "text/html; charset=utf-8", layout(body, root, liveProject)); else send(response, 404, "text/plain; charset=utf-8", "Page not found."); }
       catch (error) { send(response, 500, "text/plain; charset=utf-8", localMessage(error.message, root)); }
