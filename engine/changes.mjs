@@ -7,6 +7,7 @@ import { countWords, extractProse } from "./manuscript.mjs";
 import { runRules } from "./rules.mjs";
 import { GENERATOR } from "./identity.mjs";
 import { buildVoiceProfiles, runVoiceCheck } from "./voice.mjs";
+import { backupAfterCommit } from "./backup.mjs";
 
 const SCENE_PATH = /^chapter-(\d+)\/scene-(\d+)\/scene\.md$/u;
 
@@ -230,6 +231,7 @@ export function approveChapter(root, project, chapter = null, note = "", { subje
   if (commit.status !== 0) throw new Error(`could not save the approval: ${(commit.stderr || commit.stdout || "").trim()}`);
   const sha = git(root, ["rev-parse", "--short", "HEAD"], { stdio: ["ignore", "pipe", "pipe"] });
   if (sha.status !== 0) throw new Error("approval was saved, but its id could not be read from Git");
+  backupAfterCommit(root);
   const voices = buildVoiceProfiles(root, project);
   return { chapter: selectedChapter, id: sha.stdout.trim(), paths, message: subject, voice_profiles: voices.profiles.length, allowed_blocking: selectedFindings.allowed_blocking || [] };
 }
@@ -245,6 +247,7 @@ export function recordImportBaseline(root, project, record, importPath) {
   const commit = git(root, ["commit", "-m", subject, "-m", `Imported-with: ${GENERATOR}`, "--", ...paths], { stdio: ["ignore", "pipe", "pipe"] });
   if (commit.status !== 0) throw new Error(`could not save the imported book as the starting point: ${(commit.stderr || commit.stdout || "").trim()}`);
   const sha = git(root, ["rev-parse", "--short", "HEAD"], { stdio: ["ignore", "pipe", "pipe"] });
+  backupAfterCommit(root);
   const voices = buildVoiceProfiles(root, project);
   return { id: sha.stdout.trim(), voice_profiles: voices.profiles.length };
 }
@@ -307,6 +310,7 @@ export function undoApproval(root) {
   const commit = git(root, ["commit", "-m", `Revert "${approval.subject}"`, "-m", `This reverts commit ${approval.sha}.`, "-m", `Approved-with: ${GENERATOR}`], { stdio: ["ignore", "pipe", "pipe"] });
   if (commit.status !== 0) throw new Error("The undo is ready, but could not be saved to the book's history.");
   const sha = git(root, ["rev-parse", "--short", "HEAD"], { stdio: ["ignore", "pipe", "pipe"] });
+  backupAfterCommit(root);
   return { id: sha.stdout.trim(), approval: approval.sha.slice(0, 7) };
 }
 

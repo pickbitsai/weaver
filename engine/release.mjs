@@ -15,6 +15,7 @@ import { narrativeStateStatus, readStateManifest, statePath } from "./state.mjs"
 import { GENERATOR, HOMEPAGE, LICENSE_ID, PRODUCT_NAME, SCHEMA_BASE, VERSION } from "./identity.mjs";
 import { runRules } from "./rules.mjs";
 import { runVoiceCheck } from "./voice.mjs";
+import { backupAfterCommit } from "./backup.mjs";
 
 const RELEASE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const escapeHtml = (value) => value
@@ -170,5 +171,6 @@ export function buildRelease(root, project, releaseId, { force = false } = {}) {
     artifacts
   };
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  backupAfterCommit(root);
   return manifest;
 }

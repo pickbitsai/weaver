@@ -12,6 +12,7 @@ import { probeCodex } from "./codex-status.mjs";
 import { hostAvailable } from "./host.mjs";
 import { reviewerWarnings } from "./reviewers.mjs";
 import { compareBookSettings, dirtyGuardedConfig, unapprovedHistory, WEAVER_DENY_RULES } from "./guard.mjs";
+import { backupDoctorCheck } from "./backup.mjs";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -390,6 +391,9 @@ export function runDoctor({ bookRoot, packageRoot = PACKAGE_ROOT, nodeVersion = 
   }));
   warnings.push(...reviewerFindings);
   checks.push(checkResult("book-reviewers", "Book reviewer settings", reviewerFindings.length ? "warning" : "pass", reviewerFindings));
+  const backup = backupDoctorCheck(root, { inGit });
+  if (backup.status === "warning") warnings.push(...backup.findings);
+  checks.push({ ...checkResult(backup.id, backup.title, backup.status, backup.findings), summary: backup.summary });
   return { generator: GENERATOR, ok: blocking.length === 0, blocking, warnings, checks, guardrails };
 }
 

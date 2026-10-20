@@ -9,9 +9,10 @@ import { dirname, join, posix, resolve, win32 } from "node:path";
 import { normalizedSha256 } from "./integrity.mjs";
 import { ensureIdentity } from "./changes.mjs";
 import { GENERATOR } from "./identity.mjs";
+import { backupAfterCommit } from "./backup.mjs";
 
 export const AI_HOST_ENV = ["CLAUDECODE", "CODEX_CI", "CODEX_SESSION_ID", "CODEX_THREAD_ID"];
-export const AUTHOR_ONLY_COMMANDS = ["approve", "reject", "undo", "rule", "proposal", "state:accept", "release", "import", "guard seal"];
+export const AUTHOR_ONLY_COMMANDS = ["approve", "reject", "undo", "rule", "proposal", "state:accept", "release", "import", "guard seal", "backup setup"];
 export const PROTECTED_PATHS = [
   ".claude/**", ".codex/**", "CLAUDE.md", "AGENTS.md", "project.json", "package.json", "package-lock.json",
   ".gitignore", ".git/**", "node_modules/**", "quality/**", "narrative-state/**", "continuity/**",
@@ -35,14 +36,17 @@ export const WEAVER_DENY_RULES = [
 const SETTINGS_REASON = "Weaver's settings can't be changed by the AI; if a rule seems wrong, tell the author so they can rule on the finding.";
 const TOOL_REASON = "Weaver itself is installed and maintained by PickBits; tell the author if it seems broken.";
 const AUTHOR_REASON = "That's the author's decision; ask them to use the author page (npx weaver studio).";
+const BACKUP_REASON = "Choosing where the book is backed up is the author's decision; ask them to run `npx weaver backup setup` in a terminal.";
+export const GIT_CREDENTIAL_COMMANDS = ["credential", "credential-manager", "credential-manager-core", "credential-store", "credential-cache", "credential-wincred", "credential-osxkeychain", "credential-libsecret"];
+export const CREDENTIAL_REASON = "Git sign-in details belong to the author, and Weaver never needs them; ask the author if a backup needs signing in.";
 
 export function authorCommandRefusal(command, env = process.env) {
   if (!AUTHOR_ONLY_COMMANDS.includes(command) || !AI_HOST_ENV.some((name) => Object.keys(env).some((key) => key.toUpperCase() === name && env[key] !== undefined))) return null;
   return {
     error: command === "approve" ? "Approving is the author's decision" : "That's the author's decision",
     command,
-    why: "Weaver only lets the author approve, reject, undo, rule on findings, accept story state, import, release or seal settings.",
-    fix: "Ask the author to do this on the author page: run `npx weaver studio` and open http://127.0.0.1:4187. For sealing settings, contact PickBits."
+    why: "Weaver only lets the author approve, reject, undo, rule on findings, accept story state, import, release, seal settings or set up backups.",
+    fix: command === "backup setup" ? "Ask the author to run `npx weaver backup setup --remote <address>` in a terminal in the book folder. The author page (`npx weaver studio`) shows whether the book is backed up." : "Ask the author to do this on the author page: run `npx weaver studio` and open http://127.0.0.1:4187. For sealing settings, contact PickBits."
   };
 }
 
@@ -90,7 +94,7 @@ export function editGuard(payload) {
   return null;
 }
 
-export const GIT_WRITES = new Set("commit reset revert rebase restore checkout switch merge cherry-pick stash push pull am apply filter-branch filter-repo update-ref config tag clean gc reflog notes replace".split(" "));
+export const GIT_WRITES = new Set("commit reset revert rebase restore checkout switch merge cherry-pick stash push pull am apply filter-branch filter-repo update-ref config tag clean gc reflog notes replace remote".split(" "));
 export const INSTALL_WRITES = new Set("install i add uninstall remove update upgrade ci link rebuild".split(" "));
 const READS = new Set("cat type get-content gc head tail less more grep rg select-string sls findstr wc ls dir get-childitem gci test-path stat".split(" "));
 const executable = (token) => token.replaceAll("\\", "/").split("/").at(-1).replace(/\.(?:exe|cmd)$/iu, "").toLowerCase();
@@ -122,12 +126,18 @@ export function shellGuard(payload, depth = 0) {
   // Flatten quotes to see commands inside cmd /c, powershell -Command, bash -c,
   // and code strings. This is deliberately conservative, not a shell parser.
   const flat = command.replace(/["'`]/gu, " ");
-  if (SETUP_SCRIPT.test(flat)) return deny(TOOL_REASON);
-  const author = /(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+(approve|reject|undo|rule|proposal|state:accept|release|import|guard\s+seal)(?=\s|$|[;&|])/iu.exec(flat);
+  // A shell drops quotes and escape characters inside a word (ap''prove, ap`prove, ap^prove and ap\prove all run approve).
+  const views = `${flat}\n${command.replace(/["'`^\\]/gu, "")}`;
+  if (SETUP_SCRIPT.test(views)) return deny(TOOL_REASON);
+  const author = /(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+(approve|reject|undo|rule|proposal|state:accept|release|import|guard\s+seal|backup\s+setup)(?=\s|$|[;&|])/iu.exec(views);
   if (author) {
+    if (author[1].toLowerCase().startsWith("backup")) return deny(BACKUP_REASON);
     const chapter = /--chapter(?:=|\s+)(\d+)/iu.exec(flat)?.[1];
     return deny(chapter && author[1].toLowerCase() === "approve" ? `That's the author's decision; ask them to approve chapter ${chapter} on the author page.` : AUTHOR_REASON);
   }
+  if (/(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+backup(?=[\s;&|]|$)[^;&|\r\n]*[^\S\r\n](?:setup|--remote)(?=\s|=|[;&|]|$)/iu.test(views)) return deny(BACKUP_REASON);
+  if (/(?:^|[\s/\\;&|()])(?:weaver(?:\.cmd)?|[^\s]*weaver\.mjs)\s+guard(?=[\s;&|]|$)[^;&|\r\n]*[^\S\r\n]seal(?=\s|=|[;&|]|$)/iu.test(views)) return deny(AUTHOR_REASON);
+  if (/(?:^|[^A-Za-z0-9_])(?:GCM_TRACE|GIT_TRACE_CURL|GIT_TRACE_REDACT|GIT_CURL_VERBOSE)/iu.test(command)) return deny(CREDENTIAL_REASON);
   let project = {};
   if (existsSync(join(root, "project.json"))) project = JSON.parse(readFileSync(join(root, "project.json"), "utf8"));
   const port = Number(project.studio_port ?? project.studio?.port ?? 4187);
@@ -139,10 +149,12 @@ export function shellGuard(payload, depth = 0) {
   for (const tokens of [words, shellWords(flat)]) {
     for (let index = 0; index < tokens.length; index += 1) {
       const name = executable(tokens[index]);
+      if (name.startsWith("git-credential")) return deny(CREDENTIAL_REASON);
       let next = index + 1;
       if (name === "git") {
         next = gitCommandIndex(tokens, index);
         const subcommand = tokens[next]?.toLowerCase();
+        if (subcommand?.startsWith("credential")) return deny(CREDENTIAL_REASON);
         if (GIT_WRITES.has(subcommand) || (subcommand === "branch" && tokens.slice(next + 1).some((token) => /^-(?:[dDmM]|.*[dDmM])$|^--(?:delete|move)(?:=|$)/u.test(token)))) return deny(`Book history belongs to the author. ${AUTHOR_REASON}`);
       }
       if (["npm", "pnpm", "yarn"].includes(name)) {
@@ -216,6 +228,7 @@ export function sealBookSettings(root, project) {
   ensureIdentity(root, project);
   git(root, ["add", "--", ".weaver/guard.json"]);
   git(root, ["commit", "--only", "-m", "Seal book settings", "-m", `Approved-with: ${GENERATOR}`, "--", ".weaver/guard.json"]);
+  backupAfterCommit(root);
   return { path, changed: true };
 }
 

@@ -20,6 +20,7 @@ import { attributeDialogue } from "./voice.mjs";
 import { loadRules, ruleScopeDescription } from "./rules.mjs";
 import { acceptProposal, listProposals, rejectProposal } from "./repair.mjs";
 import { latestBookRun } from "./run.mjs";
+import { startBackgroundBackup, dropGitOverrides, backupNeeded, applyBackupGitEnv } from "./backup.mjs";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(PACKAGE_ROOT, "scripts", "weaver.mjs");
@@ -240,7 +241,8 @@ function layout(body, root, project) {
   const guardOn = !guardChecks.some((check) => check.status === "blocking");
   const guardProblem = (guardChecks.find((check) => check.status === "blocking") || guardChecks.find((check) => check.status === "warning"))?.findings[0];
   const integrity = doctor.checks.find((item) => item.id === "install-integrity")?.status === "pass";
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(project.title)} · Weaver Studio</title><link rel="stylesheet" href="/studio.css"><script src="/studio.js" defer></script></head><body><a class="skip" href="#main">Skip to content</a><header><strong>Weaver Studio</strong><nav aria-label="Main navigation">${NAV.map(([href, label]) => `<a href="${href}">${label}</a>`).join("")}</nav></header><main id="main">${body}</main><p id="action-message" role="status" aria-live="polite"></p><footer><h2>Doctor</h2><p>Supported setup: ${doctor.ok ? "yes" : "no"}${first ? ` · ${esc(first.problem)}. ${esc(first.why)} ${esc(first.fix)}` : ""}</p><p>Guardrails: ${guardOn ? "on" : "off"}${guardProblem ? ` &middot; ${esc(guardProblem.problem)}` : ""}</p>${Object.values(doctor.guardrails).map((item) => `<p>${esc(item.label)}</p>`).join("")}<p>Weaver install unchanged: ${integrity ? "yes" : "no"}</p></footer></body></html>`;
+  const check = doctor.checks.find((item) => item.id === "backup");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(project.title)} · Weaver Studio</title><link rel="stylesheet" href="/studio.css"><script src="/studio.js" defer></script></head><body><a class="skip" href="#main">Skip to content</a><header><strong>Weaver Studio</strong><nav aria-label="Main navigation">${NAV.map(([href, label]) => `<a href="${href}">${label}</a>`).join("")}</nav></header><main id="main">${body}</main><p id="action-message" role="status" aria-live="polite"></p><footer><h2>Doctor</h2><p>Supported setup: ${doctor.ok ? "yes" : "no"}${first ? ` · ${esc(first.problem)}. ${esc(first.why)} ${esc(first.fix)}` : ""}</p><p>Guardrails: ${guardOn ? "on" : "off"}${guardProblem ? ` &middot; ${esc(guardProblem.problem)}` : ""}</p>${Object.values(doctor.guardrails).map((item) => `<p>${esc(item.label)}</p>`).join("")}<p>Weaver install unchanged: ${integrity ? "yes" : "no"}</p>${check ? `<p>${esc(check.summary)}</p>` : ""}</footer></body></html>`;
 }
 
 function send(response, status, type, body) {
@@ -269,6 +271,8 @@ async function requestJson(request) {
 
 export async function startStudio({ root = process.cwd(), port = null } = {}) {
   root = resolve(root);
+  dropGitOverrides(process.env); // Approvals and backups made from the studio use the book's own Git settings, whoever started it.
+  applyBackupGitEnv(process.env); // Git's home and settings folders come from this computer's user account, whoever started the studio.
   const project = readProject(root);
   const selectedPort = port === null ? project.studio_port ?? project.studio?.port ?? 4187 : Number(port);
   if (!Number.isInteger(selectedPort) || selectedPort < 0 || selectedPort > 65535) throw new Error("Studio port must be an integer from 0 to 65535.");
@@ -355,6 +359,7 @@ export async function startStudio({ root = process.cwd(), port = null } = {}) {
     throw error;
   }
   boundPort = server.address().port;
+  if (backupNeeded(root)) startBackgroundBackup(root, { trigger: "studio" });
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
   server.on("close", () => { stopJob(); process.off("SIGINT", shutdown); process.off("SIGTERM", shutdown); });

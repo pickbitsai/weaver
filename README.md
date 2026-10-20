@@ -45,6 +45,8 @@ Claude Code and Codex edit and shell hooks block protected settings and records,
 commands, Git history/config writes, tool installation changes, and requests to
 the local author page. Ordinary prose edits, notes, checks, and reads stay available.
 
+`backup setup` is an author command too; see [Backup and restore](#backup-and-restore).
+
 `weaver init` and `weaver hooks install` install the hooks and permission rules.
 Claude's rules use `Bash(npx weaver approve:*)` and the equivalent forms for every
 author command (bare `weaver`, `npx`, `npx --no-install`, and `npx.cmd`).
@@ -384,6 +386,108 @@ text. `undo` creates a Git revert, so history is never rewritten. Rejected
 copies are kept on disk and ignored by Git; `history` shows approvals and
 undos. Nothing is ever silently discarded.
 
+## Backup and restore
+
+The book's history lives in Git on this computer. Weaver copies it to a private
+remote repository, such as a private GitHub repository or a Git folder on another
+drive, after every author decision.
+
+Set it up once from a terminal (`backup setup` is an author command):
+
+```bash
+npx weaver backup setup --remote https://github.com/your-name/your-book-backup.git --root ./my-book
+npx weaver backup status --root ./my-book
+```
+
+Create the private repository first and leave it empty: no README, licence or
+`.gitignore`. A folder works too: make it outside the book folder, ideally on
+another drive, with `git init --bare <folder>`. Weaver refuses a backup inside the
+book folder, because a copy there is lost along with the book. Setup adds a Git
+remote named `weaver-backup`, pushes once to check that it works, and records the
+setting and the last 50 backup attempts in `.weaver/backup.json`, which stays on
+this computer and out of the book's history. Weaver never asks for or stores a
+password or access token. Give the plain address, with nothing before an `@` in an
+https address; Git Credential Manager, which comes with Git for Windows, asks you
+to sign in to GitHub the first time.
+
+After that, every approval, accepted proposal, undo, ruling, story-state
+acceptance, settings seal, import and release starts a backup in the background.
+The author's action never waits for it and never fails because of it. When the
+studio starts, it backs up anything still waiting, retries a failed backup and
+re-checks a backup older than a day. `npx weaver backup now` backs up straight
+away and says in plain words what to fix when it can't. A backup only ever adds
+to the remote; if the remote has history this computer doesn't, Weaver stops and
+says so instead of overwriting it.
+
+Doctor and the studio footer show the backup state: "Backup: up to date" with
+the time of the last backup, or the problem. They warn when the book isn't backed
+up yet, when the last backup failed, when author decisions have waited more than
+an hour to reach the backup, when the last successful backup is more than a day
+old, and when the backup address was changed outside Weaver. These are warnings;
+they never stop the author's work.
+
+What is backed up: the book's committed history, which includes every approval,
+undo, ruling, story-state acceptance, settings seal and import. A release adds
+nothing to the history: its files in `releases/` stay on this computer, so a
+restored book has no record that a release was made, and the release can be
+built again from the history. Changes still waiting for approval, rejections (the
+rejected text and its note in `.weaver/rejected/`), proposals and other working
+files in `.weaver/`, and voice profiles stay on this computer too, so
+`weaver history` on a restored book lists approvals and undos but not rejections.
+Voice profiles can also be rebuilt from the history.
+
+Restore on a new computer: install Git and Node.js 22 or newer, install Weaver
+as in [Quick start](#quick-start), then clone the backup and let doctor check it:
+
+```bash
+git clone https://github.com/your-name/your-book-backup.git my-book
+npx weaver doctor --root ./my-book
+npx weaver backup setup --remote https://github.com/your-name/your-book-backup.git --root ./my-book
+```
+
+The last command keeps the new computer backing up to the same place. A backup
+folder on a drive clones the same way (`git clone E:/book-backup.git my-book`);
+setup points a new backup folder at the book's branch, so a plain clone checks it
+out. If Git says the remote HEAD refers to a nonexistent ref, list the branches
+with `git ls-remote --heads <folder>` and clone again with `--branch <name>` (for
+example `--branch main`).
+
+The AI can run `backup status` and `backup now`, because pushing history the
+author has already saved is safe. Weaver refuses `backup setup` in Claude Code and
+Codex shells. The shell guards also block it, along with `git remote`, `git push`,
+reading Git sign-in details (`git credential`), and the Git and Git Credential
+Manager trace settings that can write sign-in details to a file (`GCM_TRACE`,
+`GIT_TRACE_CURL`, `GIT_CURL_VERBOSE`).
+
+Backups use only the book's own Git settings, the settings of Git itself on this
+computer, and the author's Git settings in the home folder that the computer's
+user account records (for example `~/.gitconfig`). They ignore Git settings
+passed in environment variables, including a different home folder (`HOME`,
+`USERPROFILE`), a different settings folder (`XDG_CONFIG_HOME`), `GIT_CONFIG_*`,
+`GIT_DIR` and `GIT_SSH_COMMAND`, and they leave out trace settings. Approvals
+made in the studio ignore them too, whoever started the studio. Keep Git
+settings, such as a custom SSH program (`core.sshCommand`), in the Git settings
+file in your home folder (`~/.gitconfig`).
+
+Before every backup, Weaver checks that Git still sends it to the address the
+author set up, and that no setting changes which program Git runs to reach it
+(`receivepack`, `uploadpack` or `vcs` on the `weaver-backup` remote). After the
+push, Weaver asks the backup at that address which commit it now has, and
+records a failure unless it is the commit just sent. So the AI can't redirect a
+backup by starting the studio or running `backup now` with Git settings of its
+own. If a push still doesn't reach the backup the author chose, for example
+because a setting on the `weaver-backup` remote sent it elsewhere or the backup
+service didn't keep it, status, doctor and the studio footer show a failed
+backup instead of "up to date".
+
+These guards stop the AI's ordinary commands and common disguises, such as
+quotes or escape characters inside a command name. They are not a sandbox: the
+AI runs as the same user on the same computer, so a determined one could get
+around them. Doctor, the sealed settings and the approval history are the
+support trail for anything that gets through. After upgrading Weaver, PickBits
+re-runs `weaver hooks install` and reseals the settings so existing books get
+these rules.
+
 ## Keep narrative state current
 
 After writing or revising a scene, update its corresponding
@@ -598,6 +702,9 @@ settings-seal checks.
 | `reject` | Save and restore one chapter's pending edits |
 | `undo` | Revert the most recent approval with a new Git commit |
 | `history` | Show approvals and undos (`--json` supported) |
+| `backup setup --remote <git-url>` | Author command: back the book up to a private repository or a folder outside the book |
+| `backup status` | Show whether the book is backed up, and what to fix (`--json` supported) |
+| `backup now` | Back up the book's committed history straight away (`--json` supported) |
 | `hooks install` | Install or merge Claude Code and Codex guards (both by default) |
 | `state:status` | Show current and stale derived-state records |
 | `state bootstrap` | Build story-so-far packets, optionally run them through the host |

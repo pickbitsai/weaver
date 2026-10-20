@@ -22,7 +22,8 @@ import { runReview, submitReviewPacket } from "../engine/review.mjs";
 import { reviewerWarnings } from "../engine/reviewers.mjs";
 import { rulingStatuses, saveRuling } from "../engine/rulings.mjs";
 import { startStudio } from "../engine/studio.mjs";
-import { authorCommandRefusal, sealBookSettings } from "../engine/guard.mjs";
+import { authorCommandRefusal, sealBookSettings, AI_HOST_ENV } from "../engine/guard.mjs";
+import { setupBackup, backupNow, backupStatus, formatBackupStatus } from "../engine/backup.mjs";
 import { acceptProposal, rejectProposal, listProposals, repairChapter, submitRepairPacket, proposalSummary } from "../engine/repair.mjs";
 import { runBook } from "../engine/run.mjs";
 import { savedAnswerNote } from "../engine/packets.mjs";
@@ -130,7 +131,7 @@ function refuseIfDoctorBlocks(root, command, { allowHookInstall = false, allowSe
 
 try {
   const root = resolve(option("--root", process.cwd()));
-  const authorCommand = command === "guard" ? `guard ${positional()}` : command;
+  const authorCommand = ["guard", "backup"].includes(command) ? `${command} ${argv[0]}` : command;
   const refusal = authorCommandRefusal(authorCommand);
   if (refusal) {
     if (argv.includes("--json")) print(refusal);
@@ -278,7 +279,7 @@ try {
       for (const item of result.hosts) print(`${item.changed ? (item.created ? "Created" : "Updated") : "Already installed"} ${item.path}`);
       if (result.hosts.some((item) => item.host === "codex")) print("In Codex, trust this book folder, then open /hooks and review and trust the Weaver hooks. Restart Codex to load the command rules.");
     }
-  } else if (command === "guard" && positional() === "seal") {
+  } else if (command === "guard" && argv[0] === "seal") {
     if (refuseIfDoctorBlocks(root, authorCommand, { allowSeal: true })) process.exitCode = 1;
     else {
       const { project } = projectContext();
@@ -517,6 +518,27 @@ try {
       for (const finding of result.findings) print(voiceFindingText(finding));
       print(`\n${result.warnings} voice warning(s).`);
     }
+  } else if (command === "backup" && argv[0] === "setup") {
+    const remote = option("--remote");
+    if (!remote) throw new Error("usage: weaver backup setup --remote <git-url> [--root directory]");
+    if (!existsSync(resolve(root, "project.json"))) throw new Error("This folder isn't a Weaver book (there's no project.json in it), so Weaver didn't set up a backup. Run the command in your book folder, or add --root <your book folder>.");
+    const result = setupBackup(root, { remote });
+    if (argv.includes("--json")) print(result);
+    else print(result.ok ? `Backup set up: your book's history is now copied to ${result.remote_url}. Weaver backs it up after every author decision.`
+      : `The backup address is saved, but the first backup didn't go through: ${result.attempt.error}\nFix: ${result.attempt.fix}`);
+    if (!result.ok) process.exitCode = 1;
+  } else if (command === "backup" && argv[0] === "status") {
+    const status = backupStatus(root);
+    print(argv.includes("--json") ? status : formatBackupStatus(status));
+  } else if (command === "backup" && argv[0] === "now") {
+    const interactive = Boolean(process.stdin.isTTY) && !AI_HOST_ENV.some((name) => Object.keys(process.env).some((key) => key.toUpperCase() === name && process.env[key] !== undefined));
+    const result = backupNow(root, { interactive });
+    if (argv.includes("--json")) print(result);
+    else print(result.ok ? `Backed up: commit ${result.attempt.commit.slice(0, 7)} on ${result.attempt.branch} is in your backup.`
+      : `Backup failed: ${result.attempt?.error || result.error}\nFix: ${result.attempt?.fix || result.fix}`);
+    if (!result.ok) process.exitCode = 1;
+  } else if (command === "backup") {
+    throw new Error("usage: weaver backup setup --remote <git-url> | weaver backup status [--json] | weaver backup now [--json]. Put setup, status or now right after `weaver backup`.");
   } else if (command === "version" || command === "--version") {
     print(GENERATOR);
   } else if (command === "help") {
@@ -546,6 +568,9 @@ Usage:
   weaver reject [--chapter number] [--root directory]
   weaver undo [--root directory]
   weaver history [--root directory] [--json]
+  weaver backup setup --remote <git-url> [--root directory] [--json]
+  weaver backup status [--root directory] [--json]
+  weaver backup now [--root directory] [--json]
   # Packet commands accept --host claude|codex (run, review, repair, state bootstrap).
   weaver hooks install [--host claude|codex|both] [--user-rules] [--root directory]
   weaver guard seal [--root directory] [--json]
@@ -585,6 +610,9 @@ Usage:
   weaver reject [--chapter number] [--root directory]
   weaver undo [--root directory]
   weaver history [--root directory] [--json]
+  weaver backup setup --remote <git-url> [--root directory] [--json]
+  weaver backup status [--root directory] [--json]
+  weaver backup now [--root directory] [--json]
   # Packet commands accept --host claude|codex (run, review, repair, state bootstrap).
   weaver hooks install [--host claude|codex|both] [--user-rules] [--root directory]
   weaver guard seal [--root directory] [--json]

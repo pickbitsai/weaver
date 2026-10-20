@@ -197,6 +197,7 @@ for (const command of AUTHOR_ONLY_COMMANDS) test(`CLI author environment can run
   }
   if (command === "release") { acceptNarrativeState(root, readProject(root)); args.push("--id", "guard-test"); }
   if (command === "import") { const source = join(base, "source.md"); writeFileSync(source, "# Chapter 1\n\nAn original scene.\n"); args.push(source); }
+  if (command === "backup setup") { const remote = join(base, "backup.git"); assert.equal(spawnSync("git", ["init", "--bare", "-q", remote], { encoding: "utf8", windowsHide: true }).status, 0); args.push("--remote", remote); }
   const result = cli(root, args);
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
