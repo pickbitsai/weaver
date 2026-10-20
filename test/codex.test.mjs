@@ -107,7 +107,8 @@ test("Codex adapter reads only -o, strips billing keys, sets effort and cleans t
 test("Codex whole-book execution retries timeouts and carries packets through reviews and repairs", async (t) => {
   const { root, project } = makeBook(t);
   // Two process starts per call (fake codex, then the fixture): give an ordinary call room under load.
-  project.host = { kind: "codex", args: ["--fixture", "proposal", "--fake-mode", "timeouts"], timeout_seconds: 3 };
+  // The fixture's timed-out calls sleep 6 s, so a 5 s budget still times them out every time.
+  project.host = { kind: "codex", args: ["--fixture", "proposal", "--fake-mode", "timeouts"], timeout_seconds: 5 };
   const waits = [];
   project.run.retry.delays_seconds = [30, 120];
   const result = await runBook(root, project, { run: true, onProgress: quiet, sleep: async (ms) => waits.push(ms) });
