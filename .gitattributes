@@ -2,5 +2,7 @@
 *.mjs text eol=lf
 *.md text eol=lf
 *.json text eol=lf
+# Raw AI answers captured byte for byte: never convert their line endings.
+test/fixtures/packet-answers/*.txt -text
 logs/** export-ignore
 logs export-ignore

@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { runHost } from "./host.mjs";
 import { loadScenes } from "./manuscript.mjs";
+import { savedAnswerNote } from "./packets.mjs";
 import { writeRecord } from "./records.mjs";
 import { repairChapter, repairInputs, readProposal, proposalIsStale } from "./repair.mjs";
 import { buildReviewPacket, listLenses, reviewInputs, reviewIsCurrent, reviewRecordPath, submitReviewPacket } from "./review.mjs";
@@ -62,7 +63,7 @@ export async function runBook(root, project, { throughChapter = null, run = fals
     } finally {
       entry.seconds = (Date.now() - began) / 1000;
       persist();
-      onProgress(`${name}: ${entry.status === "skipped" ? "skipped, already current" : entry.status}${entry.error ? `: ${entry.error}` : ""}`);
+      onProgress(`${name}: ${entry.status === "skipped" ? "skipped, already current" : entry.status}${entry.error ? `: ${entry.error}` : ""}${savedAnswerNote(root, entry.answer_file)}`);
     }
   }
   await unit("check", async () => {
@@ -86,7 +87,10 @@ export async function runBook(root, project, { throughChapter = null, run = fals
     const response = await retryHost(root, project, packet.prompt);
     if (!response.ok) return { status: "failed", error: response.error };
     const result = await submitReviewPacket(root, project, packet, response.text, { host: retryHost });
-    return { status: result.ok ? "recorded" : "failed", error: result.ok ? null : result.errors.join("; "), packet_id: packet.id };
+    const warnings = result.record?.warnings || [];
+    for (const warning of warnings) onProgress(`chapter ${chapter} review ${lens.id}: warning: ${warning}`);
+    return { status: result.ok ? "recorded" : "failed", error: result.ok ? null : result.errors.join("; "), packet_id: packet.id,
+      ...(warnings.length ? { warnings } : {}), ...(result.answer_file ? { answer_file: result.answer_file } : {}) };
   });
   for (const chapter of chapters) await unit(`chapter ${chapter} repair`, async (retryHost) => {
     const inputs = repairInputs(root, project, chapter), existing = readProposal(root, chapter);
@@ -94,6 +98,7 @@ export async function runBook(root, project, { throughChapter = null, run = fals
     const result = await repairChapter(root, project, { chapter, run, host: retryHost, onProgress: () => {} });
     return { status: result.status, proposal_status: result.status, chapter, error: result.error || null,
       dropped_edits: result.dropped_edits || [],
+      ...(result.answer_file ? { answer_file: result.answer_file } : {}),
       ...(result.status === "no-usable-edits" ? { ask_again: `weaver repair --chapter ${chapter} --run` } : {}) };
   });
   record.status = "complete";
@@ -107,7 +112,7 @@ export async function runBook(root, project, { throughChapter = null, run = fals
       .map(({ chapter, dropped_edits, ask_again }) => ({ chapter, status: "no-usable-edits", dropped_edits, ask_again })),
     proposals_declined: record.units.filter((entry) => entry.proposal_status === "declined").length,
     nothing_to_repair: record.units.filter((entry) => entry.proposal_status === "nothing-to-repair").length,
-    failures: record.units.filter((entry) => entry.status === "failed").map(({ unit, error }) => ({ unit, error })),
+    failures: record.units.filter((entry) => entry.status === "failed").map(({ unit, error, answer_file }) => ({ unit, error, ...(answer_file ? { answer_file } : {}) })),
     total_seconds: (Date.now() - started) / 1000
   };
   persist();

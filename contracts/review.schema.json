@@ -27,6 +27,7 @@
       }
     },
     "dropped_findings": { "type": "integer", "minimum": 0 },
+    "warnings": { "type": "array", "items": { "type": "string", "minLength": 1 } },
     "chapter_prose_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "facts_sha256": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
     "packet_id": { "type": "string", "pattern": "^[a-f0-9]{12}$" },

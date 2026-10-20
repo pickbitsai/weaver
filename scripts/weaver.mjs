@@ -25,6 +25,7 @@ import { startStudio } from "../engine/studio.mjs";
 import { authorCommandRefusal, sealBookSettings } from "../engine/guard.mjs";
 import { acceptProposal, rejectProposal, listProposals, repairChapter, submitRepairPacket, proposalSummary } from "../engine/repair.mjs";
 import { runBook } from "../engine/run.mjs";
+import { savedAnswerNote } from "../engine/packets.mjs";
 import { withHost } from "../engine/host.mjs";
 
 const argv = process.argv.slice(2);
@@ -320,16 +321,22 @@ try {
       if (!packetId || !answerPath) throw new Error("usage: weaver submit <packet-id> --file <answer> [--root directory]");
       const { project } = projectContext();
       const packet = readPacket(root, packetId);
+      const answer = readFileSync(resolve(answerPath), "utf8");
+      const options = { answerPath: resolve(answerPath) };
       const result = packet.kind === "REPAIR"
-        ? await submitRepairPacket(root, project, packet, readFileSync(resolve(answerPath), "utf8"))
+        ? await submitRepairPacket(root, project, packet, answer, options)
         : packet.kind === "REVIEW"
-        ? await submitReviewPacket(root, project, packet, readFileSync(resolve(answerPath), "utf8"))
-        : await submitStatePacket(root, project, packetId, readFileSync(resolve(answerPath), "utf8"));
+        ? await submitReviewPacket(root, project, packet, answer, options)
+        : await submitStatePacket(root, project, packetId, answer, options);
       if (!result.ok) {
-        print(`Packet ${packetId}: answer invalid after repair: ${result.errors[0]}`);
+        const file = result.answer_file || result.record?.answer_file;
+        print(`Packet ${packetId}: answer invalid after repair: ${result.errors[0]}${savedAnswerNote(root, file)}`);
         process.exitCode = 1;
-      } else if (packet.kind === "REPAIR") print(proposalSummary(result.record));
-      else if (packet.kind === "REVIEW") print(`Chapter ${result.record.chapter} ${result.record.lens}: recorded (${result.record.findings.length} findings, ${result.record.dropped_findings} dropped)`);
+      } else if (packet.kind === "REPAIR") print(proposalSummary(result.record, root));
+      else if (packet.kind === "REVIEW") {
+        print(`Chapter ${result.record.chapter} ${result.record.lens}: recorded (${result.record.findings.length} findings, ${result.record.dropped_findings} dropped)`);
+        for (const warning of result.record.warnings || []) print(`Chapter ${result.record.chapter} ${result.record.lens}: warning: ${warning}`);
+      }
       else print(`Scene ${result.scene_id}: recorded (${result.facts} facts)`);
     }
   } else if (command === "review") {
@@ -352,7 +359,7 @@ try {
   } else if (command === "proposals") {
     const { project } = projectContext();
     const records = listProposals(root, project);
-    print(argv.includes("--json") ? records : records.map(proposalSummary).join("\n") || "No proposals yet.");
+    print(argv.includes("--json") ? records : records.map((record) => proposalSummary(record, root)).join("\n") || "No proposals yet.");
   } else if (command === "proposal") {
     if (refuseIfDoctorBlocks(root, command)) process.exitCode = 1;
     else {
@@ -375,7 +382,7 @@ try {
       print(argv.includes("--json") ? result : `Book run finished: ${result.summary.chapters_checked} chapters checked, ${result.summary.scenes_recorded} scenes recorded, ${result.summary.reviews_run} reviews run, ${result.summary.proposals_ready} proposals ready, ${result.summary.no_usable_edits.length} with no usable edits, ${result.summary.proposals_declined} declined, ${result.summary.nothing_to_repair} with nothing to repair, ${result.summary.failures.length} failures, ${result.summary.total_seconds.toFixed(1)} seconds.\nRun record: ${result.path}`);
       if (!argv.includes("--json")) for (const proposal of result.summary.no_usable_edits) print(proposalSummary({ ...proposal, edits: [], declined: [] }));
       if (result.summary.failures.length) {
-        if (!argv.includes("--json")) for (const failure of result.summary.failures) print(`${failure.unit}: ${failure.error}`);
+        if (!argv.includes("--json")) for (const failure of result.summary.failures) print(`${failure.unit}: ${failure.error}${savedAnswerNote(root, failure.answer_file)}`);
         process.exitCode = 1;
       }
     }

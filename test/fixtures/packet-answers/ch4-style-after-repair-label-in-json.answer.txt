@@ -1,0 +1,5 @@
+STYLE: CONSISTENT
+
+```json
+{"verdict":"STYLE: CONSISTENT","findings":[{"severity":"minor","scene_id":"4-1","paragraph":15,"quote":"he couldn't help but count them on the way up","issue":"The only contraction in Ivo's otherwise uncontracted close-third narration, carried by a stock phrase that explains a tic the scene has already dramatised.","repair":"Cut to \"and counted them on the way up. Nineteen.\""},{"severity":"craft","scene_id":"4-1","paragraph":9,"quote":"and the shelves were a testament to that","issue":"\"Testament to\" is a cliché that announces Ivo's competence a beat before \"Not one volume out of order in four years\" proves it.","repair":"Drop the clause and let \"Not one volume out of order in four years. Not one.\" carry it."}]}
+```

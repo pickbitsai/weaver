@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCharacters } from "./characters.mjs";
 import { runHost } from "./host.mjs";
-import { buildPacket, extractJsonBlock, validateAndRepair } from "./packets.mjs";
+import { buildPacket, extractJsonBlock, savedAnswerNote, validateAndRepair } from "./packets.mjs";
 import { countWords, loadScenes, manuscriptHash, sha256 } from "./manuscript.mjs";
 import { GENERATOR, SCHEMA_BASE } from "./identity.mjs";
 import { spawnSync } from "node:child_process";
@@ -261,9 +261,17 @@ function registryContext(root) {
 function validateStateAnswer(scene, root, answerText) {
   const extracted = extractJsonBlock(answerText);
   if (!extracted.ok) return { ok: false, value: null, errors: extracted.errors };
-  const record = String(answerText).slice(0, extracted.start).trim();
+  let record = String(answerText).slice(0, extracted.start).trim();
   const requiredHeadings = ["Newly established", "Character deltas", "Active threads", "Timeline and location", "Closing image"];
-  const errors = requiredHeadings.filter((heading) => !new RegExp(`^##\\s+${heading}\\s*$`, "imu").test(record)).map((heading) => `missing required heading: ${heading}`);
+  const missingHeadings = () => requiredHeadings.filter((heading) => !new RegExp(`^##\\s+${heading}\\s*$`, "imu").test(record));
+  const missing = missingHeadings();
+  if (missing.length) record = record.replace(/[^\r\n]+/gu, (line) => {
+    const clean = line.replace(/[*`]/gu, "").trim().replace(/^_+|_+$/gu, "")
+      .replace(/^#{1,6}(?!#)\s*/u, "").trim().replace(/^_+|_+$/gu, "").trim().replace(/\s*:\s*$/u, "").trim();
+    const heading = missing.find((heading) => heading.toLowerCase() === clean.toLowerCase());
+    return heading ? `## ${heading}` : line;
+  });
+  const errors = missingHeadings().map((heading) => `missing required heading: ${heading}`);
   const document = extracted.value;
   if (!document || typeof document !== "object" || Array.isArray(document) || !Array.isArray(document.facts)) {
     errors.push("JSON answer must contain a facts array");
@@ -391,8 +399,8 @@ export async function bootstrapState(root, project, { through = null, sceneIds =
     }
     const answer = await validateAndRepair(root, project, packet, hostResult.text, (answerText) => validateStateAnswer(scene, root, answerText), { host });
     if (!answer.ok) {
-      onProgress(`Scene ${scene.id}: answer invalid after repair: ${answer.errors[0]}`);
-      onUnit({ status: "failed", scene: scene.id, error: answer.host_error || answer.errors.join("; ") });
+      onProgress(`Scene ${scene.id}: answer invalid after repair: ${answer.errors[0]}${savedAnswerNote(root, answer.answer_file)}`);
+      onUnit({ status: "failed", scene: scene.id, error: answer.host_error || answer.errors.join("; "), ...(answer.answer_file ? { answer_file: answer.answer_file } : {}) });
       continue;
     }
     writeStateAnswer(root, project, scene, packet, answer);
@@ -410,7 +418,7 @@ export function readPacket(root, packetId) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
-export async function submitStatePacket(root, project, packetId, answerText) {
+export async function submitStatePacket(root, project, packetId, answerText, options = {}) {
   const packet = readPacket(root, packetId);
   if (packet.kind !== "STATE") throw new Error(`packet ${packetId} is not a state packet`);
   const scenes = loadScenes(root, project);
@@ -419,8 +427,8 @@ export async function submitStatePacket(root, project, packetId, answerText) {
   if (packet.inputs?.scene_prose && packet.inputs.scene_prose !== scene.hash) {
     return { ok: false, errors: ["packet is stale because the scene prose changed"], packet };
   }
-  const answer = await validateAndRepair(root, project, packet, answerText, (value) => validateStateAnswer(scene, root, value));
-  if (!answer.ok) return { ok: false, errors: answer.errors, packet };
+  const answer = await validateAndRepair(root, project, packet, answerText, (value) => validateStateAnswer(scene, root, value), options);
+  if (!answer.ok) return { ok: false, errors: answer.errors, packet, ...(answer.answer_file ? { answer_file: answer.answer_file } : {}) };
   writeStateAnswer(root, project, scene, packet, answer);
   buildFactsLedger(root, project);
   return { ok: true, scene_id: scene.id, facts: answer.value.facts.length, packet };

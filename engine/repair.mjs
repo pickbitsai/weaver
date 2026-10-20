@@ -8,7 +8,7 @@ import { loadCharacters } from "./characters.mjs";
 import { collectFindings } from "./findings.mjs";
 import { runHost } from "./host.mjs";
 import { countWords, extractProse, loadScenes, sha256 } from "./manuscript.mjs";
-import { buildPacket, extractJsonBlock, validateAndRepair } from "./packets.mjs";
+import { buildPacket, extractJsonBlock, savedAnswerNote, validateAndRepair } from "./packets.mjs";
 import { readerText } from "./prose.mjs";
 import { writeRecord } from "./records.mjs";
 import { chapterProseHash, worldBible } from "./review.mjs";
@@ -188,11 +188,11 @@ export function listProposals(root, project, snapshot = {}) {
   }).sort((a, b) => a.chapter - b.chapter);
 }
 
-async function recordRepair(root, project, inputs, packet, text, { host = runHost, note = "" } = {}) {
+async function recordRepair(root, project, inputs, packet, text, { host = runHost, note = "", answerPath = null } = {}) {
   const record = { chapter: inputs.chapter, chapter_prose_sha256: inputs.hashes.chapter_prose, inputs: inputs.hashes,
     packet_id: packet.id, created_at: new Date().toISOString(), note, findings: inputs.findings, edits: [], dropped_edits: [], declined: [] };
-  const answer = await validateAndRepair(root, project, packet, text, (value) => validateRepairAnswer(value, inputs.findings), { host });
-  if (!answer.ok) return saveProposal(root, { ...record, status: "failed", error: answer.host_error || answer.errors.join("; ") });
+  const answer = await validateAndRepair(root, project, packet, text, (value) => validateRepairAnswer(value, inputs.findings), { host, answerPath });
+  if (!answer.ok) return saveProposal(root, { ...record, status: "failed", error: answer.host_error || answer.errors.join("; "), ...(answer.answer_file ? { answer_file: answer.answer_file } : {}) });
   const checked = validateRepairEdits(root, project, inputs, answer.value);
   const status = checked.edits.length ? "ready" : checked.declined.length ? "declined" : "no-usable-edits";
   return saveProposal(root, { ...record, ...checked, status });
@@ -214,7 +214,7 @@ export async function repairChapter(root, project, { chapter, run = false, note 
   const result = response.ok ? await recordRepair(root, project, inputs, packet, response.text, { host, note }) :
     saveProposal(root, { chapter: inputs.chapter, chapter_prose_sha256: inputs.hashes.chapter_prose, inputs: inputs.hashes, packet_id: packet.id,
       status: "failed", created_at: new Date().toISOString(), findings: inputs.findings, edits: [], dropped_edits: [], declined: [], error: response.error });
-  onProgress(proposalSummary(result));
+  onProgress(proposalSummary(result, root));
   return result;
 }
 
@@ -225,8 +225,8 @@ export async function submitRepairPacket(root, project, packet, text, options = 
   return { ok: record.status !== "failed", record, errors: record.error ? [record.error] : [] };
 }
 
-export function proposalSummary(record) {
-  return [`Chapter ${record.chapter}: ${record.status.replaceAll("-", " ")} (${record.edits.length} edits, ${record.declined.length} declined)${record.error ? `: ${record.error}` : ""}`,
+export function proposalSummary(record, root = null) {
+  return [`Chapter ${record.chapter}: ${record.status.replaceAll("-", " ")} (${record.edits.length} edits, ${record.declined.length} declined)${record.error ? `: ${record.error}` : ""}${savedAnswerNote(root, record.answer_file)}`,
     ...(record.target_results || []).filter((target) => target.status === "partly-fixed").map((target) => `  Target ${target.finding_id}: ${target.message}`),
     ...record.dropped_edits.map((edit) => `  Dropped edit ${edit.number}, ${edit.scene_id} p${edit.paragraph}: ${edit.why}`),
     ...record.declined.map((item) => `  Declined ${item.finding_id}: ${item.reason}`),

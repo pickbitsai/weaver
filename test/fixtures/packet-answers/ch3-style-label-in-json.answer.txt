@@ -1,0 +1,9 @@
+STYLE: CONSISTENT
+
+The style guide's voice notes are empty in every section, including exemplars, so this review is judged against the character registry and the scene's own internal consistency. The author should know that until the voice notes are filled in, no style lens can check against a stated house voice.
+
+The Grell voice holds throughout: close third, past tense, short sentences and fragments, dock-grounded images (wet sack, drowned man, gaff, sick calf), profanity in the registry's register, and emotional beats that land by restraint rather than announcement. The nameless stranger is distinct from Grell. The two findings below are the only location-specific drifts worth the author's time.
+
+```json
+{"verdict":"STYLE: CONSISTENT","findings":[{"severity":"craft","scene_id":"3-1","paragraph":7,"quote":"Do not call me that","issue":"Mott, a nineteen-year-old dockhand, speaks in the same uncontracted formal register as the stranger (and as Anselm's registry signature), so the two speakers in this scene share one dialogue texture and the formality loses its value as the stranger's marker.","repair":"Give Mott ordinary contractions in p5, p7, p22, p26 and p29 (\"I'm going as fast as I can\", \"Don't call me that\", \"That can't come ashore\") and leave the stranger uncontracted."},{"severity":"minor","scene_id":"3-1","paragraph":23,"quote":"Harbourmaster's past seventy and asleep in his tower. He's not hobbling down here on that cane","issue":"Grell tells Mott the Harbourmaster's age and cane in one breath, which Mott already knows, so the line reads as registry facts fed through dialogue rather than Grell's dismissal.","repair":"Trim to the dismissal and keep one physical detail at most: \"Harbourmaster's asleep in his tower. He's not hobbling down here for one box. Leave the old man be.\""}]}
+```

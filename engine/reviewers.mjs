@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { sha256 } from "./manuscript.mjs";
+import { verdictKey } from "./packets.mjs";
 
 const BUILT_INS = [
   { id: "continuity", title: "Continuity", verdicts: ["CLEAR", "FLAGS"], context: ["world-bible", "outline", "facts", "previous-state"], queue: "definite" },
@@ -40,6 +41,7 @@ function parseReviewer(text, filename) {
   if (typeof fields.title !== "string" || !fields.title.trim()) throw new Error("title must be plain text");
   if (!Array.isArray(fields.verdicts) || fields.verdicts.length !== 2 || new Set(fields.verdicts).size !== 2 ||
       fields.verdicts.some((word) => !/^[A-Za-z][A-Za-z0-9_-]*$/u.test(word))) throw new Error("verdicts must contain exactly two different verdict words");
+  if (verdictKey(fields.verdicts[0]) === verdictKey(fields.verdicts[1])) throw new Error("verdicts must contain two words that differ by more than capital letters or underscores at their edges");
   fields.context ??= ["world-bible"];
   if (!Array.isArray(fields.context)) throw new Error("context must be a list in square brackets");
   for (const key of fields.context) if (!CONTEXT.has(key)) throw new Error(`unknown context key ${key}`);

@@ -69,7 +69,8 @@ The interactive route is `weaver packet state --scene 1-1`, followed by
 `weaver submit <packet-id> --file answer.md`. A malformed or deterministic
 validation failure gets one host repair attempt. Scene facts must use registry
 IDs (or `world`) and every quote must be a verbatim excerpt from that scene;
-invalid answers are skipped and never written. Editing an earlier scene makes
+invalid answers are never recorded, and the latest failed answer is kept in
+`.weaver/packets/<packet-id>.answer.txt` for diagnosis. Editing an earlier scene makes
 its state and downstream state stale again, so bootstrap in reading order.
 
 The repair path uses the same author approval boundary: imported or AI-edited
