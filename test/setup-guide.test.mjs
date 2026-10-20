@@ -306,6 +306,14 @@ test("setup shell guard denies bypasses for both hosts and allows daily work", (
   }
 });
 
+test("setup shell guard sees setup scripts split by quotes or escape characters", (t) => {
+  const book = initializeProject(join(temporary(t), "book"), { id: "the-glass-orchard", title: "The Glass Orchard", empty: true });
+  for (const [tool_name, command] of [["Bash", "sh ./set''up-book.sh --source x.tgz"], ["Bash", 'bash setup-"book".sh'],
+    ["Bash", "cmd /c powershell -File setup^-book.ps1"], ["PowerShell", "pwsh -File setup`-book.ps1"], ["Bash", "sh setup\\-book.sh"]]) {
+    assertSetupDeny(runHook("shell", { cwd: book, tool_name, tool_input: { command } }), `${tool_name}: ${command}`);
+  }
+});
+
 test("Claude setup deny rules match wildcard commands and ship in the template", () => {
   for (const rule of SETUP_DENY_RULES) assert.ok(WEAVER_DENY_RULES.includes(rule));
   const matches = (host, command) => WEAVER_DENY_RULES.some((rule) => {
