@@ -114,7 +114,7 @@ test("setup copies history, hides its record, and rejects unsafe addresses witho
   assert.equal(normalPath(address), normalPath(bare));
   const record = readBackupRecord(root);
   assert.equal(record.$schema, "https://pickbits.ai/schemas/weaver/backup-1.json");
-  assert.equal(record.generator, "PickBits Weaver 0.3.0");
+  assert.equal(record.generator, "PickBits Weaver 0.3.1");
   assert.equal(record.remote_name, "weaver-backup");
   assert.equal(record.attempts.length, 1);
   assert.equal(record.attempts[0].result, "ok");

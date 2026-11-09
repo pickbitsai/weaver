@@ -10,7 +10,7 @@ const BUILT_INS = [
   { id: "style", title: "Style", verdicts: ["CONSISTENT", "DRIFT"], context: ["world-bible"], queue: "definite" },
   { id: "critic", title: "Critic", verdicts: ["PASS", "FAIL"], context: ["world-bible", "outline"], queue: "critic" }
 ];
-const CONTEXT = new Set(["world-bible", "outline", "style-guide", "facts", "previous-state"]);
+const CONTEXT = new Set(["world-bible", "outline", "book-outline", "style-guide", "facts", "previous-state"]);
 const KEYS = new Set(["id", "title", "verdicts", "context", "queue"]);
 
 function parseReviewer(text, filename) {

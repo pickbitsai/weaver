@@ -81,7 +81,7 @@ test("health, local binding, page routes, traversal, and POST protection", async
   try {
     const health = await app.get("/api/health");
     assert.equal(health.status, 200);
-    assert.deepEqual(await health.json(), { service: "pickbits-weaver-studio", generator: "PickBits Weaver 0.3.0", book: "studio-book" });
+    assert.deepEqual(await health.json(), { service: "pickbits-weaver-studio", generator: "PickBits Weaver 0.3.1", book: "studio-book" });
     for (const route of ["/", "/book", "/book/chapter-01", "/book/chapter-01/scene-01", "/characters", "/characters/brask", "/places", "/threads", "/findings", "/changes", "/history", "/jobs"]) {
       const response = await app.get(route);
       assert.equal(response.status, 200, route);

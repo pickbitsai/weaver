@@ -1,6 +1,6 @@
 {
   "name": "@pickbitsai/weaver",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "PickBits Weaver: a provenance-aware, revision-safe book writing pipeline",
   "keywords": [
     "agentic-workflow",

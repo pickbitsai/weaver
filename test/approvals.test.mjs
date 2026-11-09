@@ -71,7 +71,7 @@ test("changes and approve commit only one chapter, recompute words, add trailer,
     const show = git(root, ["show", "--format=%B", "--name-only", "HEAD"], { GIT_CONFIG_GLOBAL: globalConfig });
     assert.equal(show.status, 0, show.stderr);
     assert.match(show.stdout, /Approve chapter 1: Opening pass/);
-    assert.match(show.stdout, /Approved-with: PickBits Weaver 0\.3\.0/);
+    assert.match(show.stdout, /Approved-with: PickBits Weaver 0\.3\.1/);
     assert.match(show.stdout, /manuscript[\\/]chapter-01[\\/]scene-01[\\/]scene\.md/);
     assert.doesNotMatch(show.stdout, /chapter-02/);
     assert.equal(git(root, ["config", "--local", "--get", "user.name"], { GIT_CONFIG_GLOBAL: globalConfig }).stdout.trim(), "Author");

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Mark Pickering and PICKBITS LLC. Part of PickBits Weaver.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadCharacters } from "./characters.mjs";
 import { runHostBatch } from "./host.mjs";
@@ -43,12 +43,25 @@ function factsContext(root, chapter) {
   return { text, hash: sha256(text) };
 }
 
-function markdownContext(root, folder, { recursive = false, excludeStarters = false } = {}) {
+function withinDirectory(directory, path) {
+  const name = relative(directory, path);
+  return name !== ".." && !name.startsWith(`..${sep}`) && !isAbsolute(name);
+}
+
+function markdownFileContext(root, path, heading, { excludeStarters = false } = {}) {
+  if (!existsSync(join(root, path))) return "";
+  const text = readFileSync(join(root, path), "utf8");
+  const starter = join(PACKAGE_ROOT, "templates", "book", path);
+  if (excludeStarters && existsSync(starter) && text === readFileSync(starter, "utf8")) return "";
+  return `### ${heading}\n${text.trim()}`;
+}
+
+function markdownContext(root, folder, { recursive = false, excludeStarters = false, excludeRoot, headingRoot = join(root, folder) } = {}) {
   const lines = [];
   const names = [];
   const walk = (prefix = "") => {
     const directory = join(root, folder, prefix);
-    if (!existsSync(directory)) return;
+    if ((excludeRoot && withinDirectory(excludeRoot, directory)) || !existsSync(directory)) return;
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const name = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (recursive && entry.isDirectory()) walk(name);
@@ -57,12 +70,35 @@ function markdownContext(root, folder, { recursive = false, excludeStarters = fa
   };
   walk();
   for (const name of names.sort()) {
-    const text = readFileSync(join(root, folder, name), "utf8");
-    const starter = join(PACKAGE_ROOT, "templates", "book", folder, name);
-    if (excludeStarters && existsSync(starter) && text === readFileSync(starter, "utf8")) continue;
-    lines.push(`### ${name}\n${text.trim()}`);
+    const path = join(folder, name);
+    const heading = relative(headingRoot, join(root, path)).replaceAll("\\", "/");
+    const text = markdownFileContext(root, path, heading, { excludeStarters });
+    if (text) lines.push(text);
   }
   return lines.join("\n\n");
+}
+
+function chapterOutline(root, project, scenes) {
+  const sceneFolder = project.outline_scene_root || "outline/scenes";
+  const sceneRoot = join(root, sceneFolder);
+  const outlineRoot = join(root, "outline");
+  const notes = markdownContext(root, "outline", { recursive: true, excludeStarters: true, excludeRoot: sceneRoot });
+  const headingRoot = withinDirectory(outlineRoot, sceneRoot) ? outlineRoot : root;
+  const outlines = scenes.map((scene) => {
+    const path = join(sceneFolder, `${scene.id}.md`);
+    const heading = relative(headingRoot, join(root, path)).replaceAll("\\", "/");
+    return markdownFileContext(root, path, heading, { excludeStarters: true });
+  });
+  return [notes, ...outlines].filter(Boolean).join("\n\n");
+}
+
+function bookOutline(root, project) {
+  const notes = markdownContext(root, "outline", { recursive: true, excludeStarters: true });
+  const sceneFolder = project.outline_scene_root || "outline/scenes";
+  const outlineRoot = join(root, "outline");
+  if (withinDirectory(outlineRoot, join(root, sceneFolder))) return notes;
+  const outlines = markdownContext(root, sceneFolder, { recursive: true, excludeStarters: true, excludeRoot: outlineRoot, headingRoot: root });
+  return [notes, outlines].filter(Boolean).join("\n\n");
 }
 
 export function worldBible(root) {
@@ -107,11 +143,12 @@ export function buildReviewPacket(root, project, chapter, lens, inputs = reviewI
     let title, text, hash;
     if (key === "world-bible") { title = "World bible"; text = worldBible(root); }
     if (key === "outline") {
-      title = "Outline"; text = markdownContext(root, "outline", { recursive: true, excludeStarters: true });
+      title = "Outline"; text = chapterOutline(root, project, inputs.chapterScenes);
       // Keep legacy built-in packets byte-identical when there is no authored outline.
       if (!text && definition.builtin) continue;
       text ||= "_No project outline notes._";
     }
+    if (key === "book-outline") { title = "Book outline"; text = bookOutline(root, project) || "_No project outline notes._"; }
     if (key === "style-guide") { title = "Style guide"; text = markdownContext(root, "style-guide") || "_No style-guide notes._"; }
     if (key === "facts") { title = "Earlier facts"; text = inputs.facts.text; hash = inputs.facts.hash || ""; }
     if (key === "previous-state") { title = "Previous chapter narrative state"; text = inputs.previous; }

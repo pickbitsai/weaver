@@ -138,7 +138,7 @@ try {
   });
   const studioHealth = await fetch(new URL("api/health", studioUrl));
   assert.equal(studioHealth.status, 200);
-  assert.deepEqual(await studioHealth.json(), { service: "pickbits-weaver-studio", generator: "PickBits Weaver 0.3.0", book: "consumer-book" });
+  assert.deepEqual(await studioHealth.json(), { service: "pickbits-weaver-studio", generator: "PickBits Weaver 0.3.1", book: "consumer-book" });
   studioChild.kill();
   studioChild = null;
 

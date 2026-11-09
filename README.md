@@ -645,7 +645,7 @@ Add a reviewer at `quality/reviewers/<id>.md`, for example:
 id: character-audit
 title: Character audit
 verdicts: [CLEAR, FLAGS]
-context: [world-bible, outline, style-guide, facts, previous-state]
+context: [world-bible, outline, book-outline, style-guide, facts, previous-state]
 queue: definite
 ---
 Check every speaking character against the registry and world bible.
@@ -659,13 +659,24 @@ required; ids are kebab-case, match the filename, and cannot replace a built-in.
 The two distinct verdict words use letters, digits, underscores or hyphens and
 start with a letter; the first means nothing to report. They must differ by more
 than capital letters or underscores at their edges. `context` is any subset
-of the five keys shown, defaults to `[world-bible]`, and can be `[]`.
+of the six keys shown, defaults to `[world-bible]`, and can be `[]`.
 The registry and chapter reader text are always included. `world-bible` reads
 top-level Markdown notes, excluding voice profiles and unchanged starters;
-`outline` reads Markdown recursively, excluding unchanged starters;
-`style-guide` reads all top-level Markdown. Continuity and critic also receive
-authored outline notes. With no authored outline, their packets keep the old
-layout. Invalid reviewers are skipped with named warnings in `check` and `doctor`.
+`outline` reads book-level Markdown recursively under `outline/`, excluding
+the scene outline root, then adds only the current chapter's scene outlines in
+scene order. The scene outline root is `project.outline_scene_root`, defaulting
+to `outline/scenes`. Unchanged template starters are excluded. Editing a scene
+outline makes only that chapter's outline-reading reviews stale; editing a
+book-level note makes every chapter's outline-reading reviews stale.
+`book-outline` reads all Markdown recursively under `outline/`, plus all scene
+outlines if the scene root is outside that folder, excluding unchanged starters.
+Custom reviewers can request it when they need the entire book's outline;
+edits anywhere in that context make their reviews stale across chapters.
+`style-guide` reads all top-level Markdown. Built-in continuity and critic use
+the scoped `outline`; no built-in uses `book-outline`. With no authored outline
+in scope, built-in packets keep the old layout. Custom `outline` contexts keep
+the `_No project outline notes._` placeholder when empty. Invalid reviewers are
+skipped with named warnings in `check` and `doctor`.
 
 `queue: definite` queues only definite findings. `top-2` or `top-3` queues up to
 that many definite and craft findings when the verdict is the second word,

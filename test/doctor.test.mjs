@@ -140,7 +140,7 @@ test("doctor JSON output is machine-readable and identifies Weaver", () => {
     const result = runWeaver(["doctor", "--json", "--root", book]);
     assert.equal(result.status, 0, result.stderr);
     const report = JSON.parse(result.stdout);
-    assert.equal(report.generator, "PickBits Weaver 0.3.0");
+    assert.equal(report.generator, "PickBits Weaver 0.3.1");
     assert.equal(report.ok, true);
   } finally {
     rmSync(book, { recursive: true, force: true });

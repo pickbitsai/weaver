@@ -11,7 +11,8 @@ import { initializeProject } from "../engine/init.mjs";
 import { importBook } from "../engine/import.mjs";
 import { readProject } from "../engine/project.mjs";
 import { collectFindings } from "../engine/findings.mjs";
-import { buildReviewPacket, listLenses, reviewRecordPath, runReview, submitReviewPacket } from "../engine/review.mjs";
+import { buildReviewPacket, listLenses, reviewInputs, reviewRecordPath, runReview, submitReviewPacket } from "../engine/review.mjs";
+import { sha256 } from "../engine/manuscript.mjs";
 import { reviewerWarnings } from "../engine/reviewers.mjs";
 import { seedCharacters } from "../engine/characters.mjs";
 import { sealBookSettings } from "../engine/guard.mjs";
@@ -118,6 +119,160 @@ test("built-in packets without book notes are byte-identical to the V1-A snapsho
   }
 });
 
+function outlineNotes(root, sceneRoot = "outline/scenes") {
+  mkdirSync(join(root, sceneRoot), { recursive: true });
+  writeFileSync(join(root, sceneRoot, "1-1.md"), "SCENE ONE SENTINEL");
+  writeFileSync(join(root, sceneRoot, "2-1.md"), "SCENE TWO SENTINEL");
+  writeFileSync(join(root, "outline", "arc.md"), "BOOK NOTE SENTINEL");
+}
+
+test("outline context scopes built-in packets and hashes to the chapter", () => {
+  const { root, project } = book();
+  try {
+    outlineNotes(root);
+    delete project.outline_scene_root;
+    for (const chapter of [1, 2]) {
+      const own = chapter === 1 ? "SCENE ONE SENTINEL" : "SCENE TWO SENTINEL";
+      const other = chapter === 1 ? "SCENE TWO SENTINEL" : "SCENE ONE SENTINEL";
+      for (const lens of ["continuity", "critic"]) {
+        const packet = buildReviewPacket(root, project, chapter, lens);
+        assert.ok(packet.prompt.includes(own), `${chapter}:${lens} includes its scene outline`);
+        assert.match(packet.prompt, /BOOK NOTE SENTINEL/u);
+        assert.ok(!packet.prompt.includes(other), `${chapter}:${lens} excludes the other chapter's scene outline`);
+        assert.equal(packet.inputs.outline, sha256(`### arc.md\nBOOK NOTE SENTINEL\n\n### scenes/${chapter}-1.md\n${own}`));
+      }
+      const style = buildReviewPacket(root, project, chapter, "style");
+      assert.doesNotMatch(style.prompt, /SCENE ONE SENTINEL|SCENE TWO SENTINEL|BOOK NOTE SENTINEL/u);
+      assert.equal(Object.hasOwn(style.inputs, "outline"), false);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("outline edits stale only the owning chapter while book notes stale every chapter", async () => {
+  const { root, project } = book();
+  try {
+    outlineNotes(root);
+    for (const chapter of [1, 2]) {
+      await runReview(root, project, { chapter, run: true, onProgress() {} });
+      for (const lens of ["continuity", "style", "critic"]) assert.ok(existsSync(reviewRecordPath(root, chapter, lens)));
+      assert.deepEqual(collectFindings(root, project, { chapter }).chapters[0].stale_reviews, []);
+    }
+    writeFileSync(join(root, "outline", "scenes", "2-1.md"), "CHANGED SCENE TWO SENTINEL");
+    assert.deepEqual(collectFindings(root, project, { chapter: 1 }).chapters[0].stale_reviews, []);
+    assert.deepEqual(collectFindings(root, project, { chapter: 2 }).chapters[0].stale_reviews, ["continuity", "critic"]);
+    writeFileSync(join(root, "outline", "arc.md"), "CHANGED BOOK NOTE SENTINEL");
+    assert.deepEqual(collectFindings(root, project, { chapter: 1 }).chapters[0].stale_reviews, ["continuity", "critic"]);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("book-outline front matter validates without warnings in check or listLenses", () => {
+  const { root } = book();
+  try {
+    reviewer(root, "book-audit", { context: "[book-outline]" });
+    const warnings = [];
+    const lenses = listLenses(root, { onWarning: (warning) => warnings.push(warning) });
+    assert.deepEqual(warnings, []);
+    assert.deepEqual(lenses.find((lens) => lens.id === "book-audit")?.context, ["book-outline"]);
+    const check = cli(root, ["check"]);
+    assert.deepEqual(JSON.parse(check.stdout).warnings, []);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("custom outline context is scoped and book-outline retains the whole folder", () => {
+  const { root, project } = book();
+  try {
+    outlineNotes(root);
+    reviewer(root, "book-audit", { context: "[book-outline]" });
+    reviewer(root, "chapter-audit", { context: "[outline]" });
+    const whole = buildReviewPacket(root, project, 1, "book-audit");
+    assert.match(whole.prompt, /## Book outline\n### arc.md\nBOOK NOTE SENTINEL\n\n### scenes\/1-1.md\nSCENE ONE SENTINEL\n\n### scenes\/2-1.md\nSCENE TWO SENTINEL/u);
+    assert.equal(whole.inputs.book_outline, sha256("### arc.md\nBOOK NOTE SENTINEL\n\n### scenes/1-1.md\nSCENE ONE SENTINEL\n\n### scenes/2-1.md\nSCENE TWO SENTINEL"));
+    assert.equal(Object.hasOwn(whole.inputs, "outline"), false);
+    const scoped = buildReviewPacket(root, project, 1, "chapter-audit");
+    assert.match(scoped.prompt, /## Outline\n### arc.md\nBOOK NOTE SENTINEL\n\n### scenes\/1-1.md\nSCENE ONE SENTINEL/u);
+    assert.doesNotMatch(scoped.prompt, /SCENE TWO SENTINEL/u);
+    writeFileSync(join(root, "outline", "scenes", "2-1.md"), "CHANGED SCENE TWO SENTINEL");
+    assert.equal(buildReviewPacket(root, project, 1, "chapter-audit").id, scoped.id);
+    assert.notEqual(buildReviewPacket(root, project, 1, "book-audit").id, whole.id);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("outline context respects custom scene roots and heading paths", () => {
+  for (const sceneRoot of ["scene-outlines", "outline/locked-scenes"]) {
+    const { root, project } = book();
+    try {
+      project.outline_scene_root = sceneRoot;
+      writeFileSync(join(root, "project.json"), `${JSON.stringify(project, null, 2)}\n`);
+      outlineNotes(root, sceneRoot);
+      const packet = buildReviewPacket(root, readProject(root), 1, "continuity");
+      const headingRoot = sceneRoot.replace(/^outline\//u, "");
+      assert.ok(packet.prompt.includes(`### ${headingRoot}/1-1.md\nSCENE ONE SENTINEL`));
+      assert.match(packet.prompt, /BOOK NOTE SENTINEL/u);
+      assert.doesNotMatch(packet.prompt, /SCENE TWO SENTINEL/u);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test("book-outline includes external scene outlines recursively without matching sibling folders", () => {
+  const { root, project } = book();
+  try {
+    project.outline_scene_root = "outline-scenes";
+    writeFileSync(join(root, "project.json"), `${JSON.stringify(project, null, 2)}\n`);
+    outlineNotes(root, project.outline_scene_root);
+    mkdirSync(join(root, "outline-scenes", "nested"));
+    writeFileSync(join(root, "outline-scenes", "nested", "extra.md"), "EXTRA SCENE SENTINEL");
+    mkdirSync(join(root, "outline-scenes-extra"));
+    writeFileSync(join(root, "outline-scenes-extra", "other.md"), "SIBLING SENTINEL");
+    reviewer(root, "book-audit", { context: "[book-outline]" });
+    const packet = buildReviewPacket(root, readProject(root), 1, "book-audit");
+    assert.match(packet.prompt, /BOOK NOTE SENTINEL[\s\S]*### outline-scenes\/1-1.md\nSCENE ONE SENTINEL[\s\S]*### outline-scenes\/2-1.md\nSCENE TWO SENTINEL[\s\S]*### outline-scenes\/nested\/extra.md\nEXTRA SCENE SENTINEL/u);
+    assert.doesNotMatch(packet.prompt, /SIBLING SENTINEL/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("outline context sorts book notes before scene outlines in chapter input order", () => {
+  const { root, project } = book();
+  try {
+    outlineNotes(root);
+    mkdirSync(join(root, "outline", "nested"));
+    writeFileSync(join(root, "outline", "nested", "arc.md"), "NESTED BOOK SENTINEL");
+    mkdirSync(join(root, "outline", "scenes-extra"));
+    writeFileSync(join(root, "outline", "scenes-extra", "arc.md"), "SIBLING BOOK SENTINEL");
+    writeFileSync(join(root, "outline", "scenes", "1-2.md"), "SECOND BEAT SENTINEL");
+    writeFileSync(join(root, "outline", "scenes", "1-10.md"), "TENTH BEAT SENTINEL");
+    const inputs = reviewInputs(root, project, 1);
+    const scene = inputs.chapterScenes[0];
+    inputs.chapterScenes.push({ ...scene, id: "1-2" }, { ...scene, id: "1-10" }, { ...scene, id: "1-11" });
+    const packet = buildReviewPacket(root, project, 1, "critic", inputs);
+    const expected = "### arc.md\nBOOK NOTE SENTINEL\n\n### nested/arc.md\nNESTED BOOK SENTINEL\n\n### scenes-extra/arc.md\nSIBLING BOOK SENTINEL\n\n### scenes/1-1.md\nSCENE ONE SENTINEL\n\n### scenes/1-2.md\nSECOND BEAT SENTINEL\n\n### scenes/1-10.md\nTENTH BEAT SENTINEL";
+    assert.ok(packet.prompt.includes(`## Outline\n${expected}\n\n## Chapter reader text`));
+    assert.equal(packet.inputs.outline, sha256(expected));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("unchanged scene outline starters stay excluded and custom outline keeps its placeholder", () => {
+  const { root, project } = book();
+  try {
+    const scenePath = join(root, "outline", "scenes", "1-1.md");
+    assert.equal(existsSync(scenePath), false, "empty initialization removes the scene starter");
+    const before = Object.fromEntries(["continuity", "critic"].map((lens) => [lens, buildReviewPacket(root, project, 1, lens)]));
+    writeFileSync(scenePath, readFileSync(join(ROOT, "templates", "book", "outline", "scenes", "1-1.md"), "utf8"));
+    for (const lens of ["continuity", "critic"]) {
+      const packet = buildReviewPacket(root, project, 1, lens);
+      assert.deepEqual(packet, before[lens]);
+      assert.doesNotMatch(packet.prompt, /## Outline|### scenes\/1-1.md/u);
+      assert.equal(Object.hasOwn(packet.inputs, "outline"), false);
+    }
+    for (const key of ["outline", "book-outline"]) {
+      reviewer(root, "chapter-audit", { context: `[${key}]` });
+      const custom = buildReviewPacket(root, project, 1, "chapter-audit");
+      assert.match(custom.prompt, /## (?:Outline|Book outline)\n_No project outline notes\._/u);
+      assert.doesNotMatch(custom.prompt, /### scenes\/1-1.md/u);
+      assert.equal(custom.inputs[key.replaceAll("-", "_")], sha256("_No project outline notes._"));
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("book packets include exactly the requested contexts and always the registry and chapter", () => {
   const { root, project } = book();
   try {
@@ -132,8 +287,11 @@ test("book packets include exactly the requested contexts and always the registr
     mkdirSync(join(root, "continuity"), { recursive: true });
     writeFileSync(join(root, "continuity", "facts.json"), JSON.stringify({ subjects: { brask: [{ scene_id: "1-1", kind: "knowledge", value: "FACT SENTINEL" }] } }));
     writeFileSync(join(root, "narrative-state", "1-1.md"), "STATE SENTINEL");
-    const keys = ["world-bible", "outline", "style-guide", "facts", "previous-state"];
-    const sentinels = ["BIBLE SENTINEL", "OUTLINE SENTINEL", "STYLE SENTINEL", "FACT SENTINEL", "STATE SENTINEL"];
+    const keys = ["world-bible", "outline", "book-outline", "style-guide", "facts", "previous-state"];
+    const sentinels = {
+      "BIBLE SENTINEL": ["world-bible"], "OUTLINE SENTINEL": ["outline", "book-outline"],
+      "STYLE SENTINEL": ["style-guide"], "FACT SENTINEL": ["facts"], "STATE SENTINEL": ["previous-state"]
+    };
     for (const requested of [[], ...keys.map((key) => [key]), keys]) {
       const file = reviewer(root, "character-audit", { context: `[${requested.join(", ")}]` });
       const packet = buildReviewPacket(root, project, 2, "character-audit");
@@ -141,7 +299,7 @@ test("book packets include exactly the requested contexts and always the registr
       assert.match(packet.prompt, /## Chapter reader text[\s\S]*Wren carries a quiet message/u);
       assert.match(packet.prompt, /Start with CHARACTER-AUDIT: QUIET or ALERT/u);
       assert.match(packet.inputs.reviewer_file, /^[a-f0-9]{64}$/u);
-      for (const [index, key] of keys.entries()) assert.equal(packet.prompt.includes(sentinels[index]), requested.includes(key), key);
+      for (const [sentinel, contexts] of Object.entries(sentinels)) assert.equal(packet.prompt.includes(sentinel), contexts.some((key) => requested.includes(key)), sentinel);
       assert.doesNotMatch(packet.prompt, /VOICE SENTINEL|^# World bible|^# Book outline/mu);
       assert.ok(existsSync(file));
     }
